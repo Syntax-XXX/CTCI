@@ -3,8 +3,8 @@ import { createServerSupabase } from '@/lib/supabase/server'
 import { createAdminSupabase } from '@/lib/supabase/admin'
 import { APP_URL, botGuild, discordMe, discordUserGuilds, exchangeDiscordCode, registerDiscordGuildCommands } from '@/lib/discord'
 
-const ADMINISTRATOR = 1n << 3n
-const MANAGE_GUILD = 1n << 5n
+const ADMINISTRATOR = 8
+const MANAGE_GUILD = 32
 
 export async function GET(req:NextRequest){
   const state=req.nextUrl.searchParams.get('state')
@@ -25,9 +25,9 @@ export async function GET(req:NextRequest){
     const userGuilds=await discordUserGuilds(token.access_token)
     const selected=userGuilds.find(g=>String(g.id)===guildId)
     if(!selected)throw new Error('Selected Discord server is not available to this Discord account')
-    let permissions=0n
-    try{permissions=BigInt(selected.permissions||'0')}catch{throw new Error('Discord returned invalid server permissions')}
-    if(!selected.owner&&(permissions&ADMINISTRATOR)===0n&&(permissions&MANAGE_GUILD)===0n)throw new Error('Manage Server permission is required to connect this Discord server')
+    const permissionText=String(selected.permissions||'0')
+    if(!/^\d+$/.test(permissionText))throw new Error('Discord returned invalid server permissions')
+    if(!selected.owner&&!hasDiscordPermission(permissionText,ADMINISTRATOR)&&!hasDiscordPermission(permissionText,MANAGE_GUILD))throw new Error('Manage Server permission is required to connect this Discord server')
 
     const guild=await botGuild(guildId)
     await registerDiscordGuildCommands(guildId)
@@ -40,6 +40,12 @@ export async function GET(req:NextRequest){
     console.error('Discord connect failed',e)
     return clearState(NextResponse.redirect(new URL('/dashboard/badges?discord=error',APP_URL)))
   }
+}
+
+function hasDiscordPermission(decimal:string,flag:number){
+  let low6=0
+  for(const char of decimal)low6=(low6*10+Number(char))%64
+  return(low6&flag)===flag
 }
 
 function clearState(response:NextResponse){
