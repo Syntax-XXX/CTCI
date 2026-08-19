@@ -18,7 +18,7 @@ export async function POST(request:NextRequest){
     const existingPlugin=await admin.from('plugins').select('id,created_by,marketplace_status').eq('id',m.id).maybeSingle()
     if(existingPlugin.error)throw existingPlugin.error
     if(existingPlugin.data?.marketplace_status==='published')return NextResponse.json({error:'This plugin ID is published in the Marketplace and cannot be overwritten by a private upload'},{status:409})
-    if(existingPlugin.data?.created_by&&existingPlugin.data.created_by!==user.id)return NextResponse.json({error:'This private plugin ID is owned by another developer account'},{status:409})
+    if(existingPlugin.data&&existingPlugin.data.created_by!==user.id)return NextResponse.json({error:'This private plugin ID is owned by another developer account or is a legacy reserved ID'},{status:409})
 
     const existingVersion=await admin.from('plugin_versions').select('id,marketplace_published').eq('plugin_id',m.id).eq('version',m.version).maybeSingle()
     if(existingVersion.error)throw existingVersion.error
@@ -27,7 +27,7 @@ export async function POST(request:NextRequest){
     const upload=await admin.storage.from('ctci-plugins').upload(path,bytes,{contentType:'application/zip',upsert:false});if(upload.error&&!upload.error.message.toLowerCase().includes('already exists'))throw upload.error
 
     if(existingPlugin.data){
-      const r=await admin.from('plugins').update({name:m.name,author:m.author,description:m.description||'',api_version:m.apiVersion,latest_version:m.version,created_by:user.id,updated_at:new Date().toISOString()}).eq('id',m.id).eq('created_by',user.id)
+      const r=await admin.from('plugins').update({name:m.name,author:m.author,description:m.description||'',api_version:m.apiVersion,latest_version:m.version,updated_at:new Date().toISOString()}).eq('id',m.id).eq('created_by',user.id)
       if(r.error)throw r.error
     }else{
       const r=await admin.from('plugins').insert({id:m.id,name:m.name,author:m.author,description:m.description||'',api_version:m.apiVersion,latest_version:m.version,created_by:user.id,marketplace_status:'private'})
