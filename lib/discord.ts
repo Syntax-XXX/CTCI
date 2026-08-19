@@ -1,15 +1,45 @@
+import { createPublicKey, verify } from 'crypto'
+
 const DISCORD_API='https://discord.com/api/v10'
 export const APP_URL=(process.env.NEXT_PUBLIC_APP_URL||'https://chromachat.syntax-xxx.is-a.dev').replace(/\/$/,'')
 export const DISCORD_REDIRECT_URI=`${APP_URL}/api/discord/callback`
+export const DISCORD_INTERACTIONS_ENDPOINT=`${APP_URL}/api/discord/interactions`
 export function discordClientId(){const v=process.env.DISCORD_CLIENT_ID;if(!v)throw new Error('DISCORD_CLIENT_ID is not configured');return v}
 export function discordClientSecret(){const v=process.env.DISCORD_CLIENT_SECRET;if(!v)throw new Error('DISCORD_CLIENT_SECRET is not configured');return v}
 export function discordBotToken(){const v=process.env.DISCORD_BOT_TOKEN;if(!v)throw new Error('DISCORD_BOT_TOKEN is not configured');return v}
+export function discordPublicKey(){const v=process.env.DISCORD_PUBLIC_KEY;if(!v||!/^[0-9a-fA-F]{64}$/.test(v))throw new Error('DISCORD_PUBLIC_KEY is not configured');return v.toLowerCase()}
 export async function exchangeDiscordCode(code:string){const body=new URLSearchParams({client_id:discordClientId(),client_secret:discordClientSecret(),grant_type:'authorization_code',code,redirect_uri:DISCORD_REDIRECT_URI});const r=await fetch(`${DISCORD_API}/oauth2/token`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body,cache:'no-store'});if(!r.ok)throw new Error(`Discord token exchange failed: ${r.status}`);return r.json() as Promise<any>}
 export async function discordMe(access:string){const r=await fetch(`${DISCORD_API}/users/@me`,{headers:{Authorization:`Bearer ${access}`},cache:'no-store'});if(!r.ok)throw new Error(`Discord user lookup failed: ${r.status}`);return r.json() as Promise<any>}
 export async function discordUserGuilds(access:string){const r=await fetch(`${DISCORD_API}/users/@me/guilds`,{headers:{Authorization:`Bearer ${access}`},cache:'no-store'});if(!r.ok)throw new Error(`Discord guild lookup failed: ${r.status}`);return r.json() as Promise<Array<{id:string;name:string;permissions:string;owner?:boolean}>>}
 export async function botGuild(guildId:string){const r=await fetch(`${DISCORD_API}/guilds/${guildId}`,{headers:{Authorization:`Bot ${discordBotToken()}`},cache:'no-store'});if(!r.ok)throw new Error(`CTCI bot cannot access selected Discord server (${r.status})`);return r.json() as Promise<any>}
 export async function botGuildRoles(guildId:string){const r=await fetch(`${DISCORD_API}/guilds/${guildId}/roles`,{headers:{Authorization:`Bot ${discordBotToken()}`},cache:'no-store'});if(!r.ok)throw new Error(`Could not load Discord roles (${r.status})`);return r.json() as Promise<any[]>}
 export async function botGuildChannels(guildId:string){const r=await fetch(`${DISCORD_API}/guilds/${guildId}/channels`,{headers:{Authorization:`Bot ${discordBotToken()}`},cache:'no-store'});if(!r.ok)throw new Error(`Could not load Discord channels (${r.status})`);return r.json() as Promise<any[]>}
+
+export async function registerDiscordGuildCommands(guildId:string){
+  const id=String(guildId||'').trim()
+  if(!/^\d{5,30}$/.test(id))throw new Error('Invalid Discord guild ID')
+  const commands=[{
+    name:'twitch',
+    description:'Send a message from Discord to your connected Twitch chat',
+    type:1,
+    options:[{name:'message',description:'Message to send to Twitch chat',type:3,required:true,max_length:450}],
+    dm_permission:false,
+  }]
+  const r=await fetch(`${DISCORD_API}/applications/${discordClientId()}/guilds/${id}/commands`,{method:'PUT',headers:{Authorization:`Bot ${discordBotToken()}`,'Content-Type':'application/json'},body:JSON.stringify(commands),cache:'no-store'})
+  const text=await r.text()
+  if(!r.ok)throw new Error(`Discord command registration failed: ${r.status} ${text.slice(0,1000)}`)
+  return text?JSON.parse(text):[]
+}
+
+export function verifyDiscordInteractionSignature(timestamp:string,body:string,signature:string){
+  if(!/^\d+$/.test(timestamp)||!/^[0-9a-fA-F]{128}$/.test(signature))return false
+  try{
+    const rawKey=Buffer.from(discordPublicKey(),'hex')
+    const der=Buffer.concat([Buffer.from('302a300506032b6570032100','hex'),rawKey])
+    const key=createPublicKey({key:der,format:'der',type:'spki'})
+    return verify(null,Buffer.from(timestamp+body),key,Buffer.from(signature,'hex'))
+  }catch{return false}
+}
 
 export type DiscordChatEmbedInput={
   channelId:string
