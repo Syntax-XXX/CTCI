@@ -5,6 +5,61 @@ export type PluginCapability =
   | 'overlay.write' | 'storage.read' | 'storage.write' | 'config.read'
   | 'config.write' | 'ui.render' | 'events.subscribe' | 'sounds.play'
 
+export type PluginSettingField = {
+  key:string
+  label:string
+  description?:string
+  type:'text'|'number'|'boolean'|'color'|'select'
+  default?:string|number|boolean
+  min?:number
+  max?:number
+  step?:number
+  options?:Array<{label:string;value:string}>
+}
+
+export type PluginDashboardBlock =
+  | {type:'heading';text:string;level?:2|3|4}
+  | {type:'text';text:string}
+  | {type:'stat';label:string;value:string}
+  | {type:'badge';text:string}
+  | {type:'image';src:string;alt?:string}
+  | {type:'link';label:string;href:string;variant?:'primary'|'secondary'}
+  | {type:'progress';label?:string;value:number;max?:number}
+  | {type:'divider'}
+
+export type PluginDashboardCard = {
+  id:string
+  title:string
+  description?:string
+  placement?:'overview'|'plugins'|'commands'|'badges'
+  blocks?:PluginDashboardBlock[]
+  settings?:PluginSettingField[]
+}
+
+export type PluginOverlayWidget = {
+  id:string
+  type:'text'|'image'|'box'|'progress'
+  text?:string
+  src?:string
+  x?:number
+  y?:number
+  width?:number
+  height?:number
+  opacity?:number
+  color?:string
+  background?:string
+  fontSize?:number
+  borderRadius?:number
+  value?:number
+  max?:number
+  zIndex?:number
+}
+
+export type PluginUIContributions = {
+  dashboard?:PluginDashboardCard[]
+  overlay?:PluginOverlayWidget[]
+}
+
 export type PluginDefinition = {
   id: string
   apiVersion: '1'
