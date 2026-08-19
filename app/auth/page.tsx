@@ -1,6 +1,7 @@
 'use client'
 
 import { SyntheticEvent, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
@@ -26,27 +27,42 @@ export default function AuthPage() {
     router.push('/dashboard')
   }
 
-  return <main className="auth-card">
-    <div className="brand">CTCI <span>Chat</span></div>
-    <h1 className="auth-title">Sign in with Twitch</h1>
-    <p className="muted">One Twitch authorization creates your CTCI account, connects your channel, and enables chat ingestion for your overlay.</p>
+  return <>
+    <div className="shell" style={{ paddingBottom: 0 }}>
+      <nav className="nav">
+        <Link href="/" className="brand">CTCI <span>Studio</span></Link>
+        <Link href="/" className="btn">Back to home</Link>
+      </nav>
+    </div>
 
-    <a className="btn twitch-btn" href="/api/auth/twitch">
-      <span className="twitch-mark">◈</span>
-      Continue with Twitch
-    </a>
-    <p className="small muted auth-note">CTCI uses one application-wide Twitch Client ID. Every streamer authorizes that same app and receives their own private OAuth tokens.</p>
+    <main className="auth-card">
+      <div className="status success">Streamer sign-in</div>
+      <h1 className="auth-title">Connect your Twitch channel.</h1>
+      <p className="muted">Your Twitch account becomes your CTCI identity. We connect your channel, create the dashboard session, and prepare your realtime OBS overlay in one flow.</p>
 
-    <button className="link-button" type="button" onClick={()=>setShowLegacy(v=>!v)}>{showLegacy?'Hide email login':'Use legacy email login'}</button>
+      <a className="btn twitch-btn" href="/api/auth/twitch">
+        <span className="twitch-mark">◆</span>
+        Continue with Twitch
+      </a>
 
-    {showLegacy&&<form className="legacy-auth">
-      <div className="field"><label>Email</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} required /></div>
-      <div className="field"><label>Password</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} minLength={8} required /></div>
-      {message && <p className="status">{message}</p>}
-      <div className="actions">
-        <button type="submit" disabled={busy} className="btn primary" onClick={e=>submit(e,'login')}>Sign in</button>
-        <button type="button" disabled={busy} className="btn" onClick={e=>submit(e,'signup')}>Create account</button>
+      <p className="small muted auth-note">CTCI uses one application-wide Twitch app. Your personal OAuth tokens remain private on the server and are never included in the OBS URL.</p>
+
+      <div className="command-list" style={{ marginTop: 20 }}>
+        <div className="command-card"><strong>One-click channel connection</strong><div className="small muted">No separate Twitch Client ID setup per streamer.</div></div>
+        <div className="command-card"><strong>Private server-side credentials</strong><div className="small muted">OAuth tokens never reach your Browser Source.</div></div>
       </div>
-    </form>}
-  </main>
+
+      <button className="link-button" type="button" onClick={()=>setShowLegacy(v=>!v)}>{showLegacy?'Hide email login':'Use legacy email login'}</button>
+
+      {showLegacy&&<form className="legacy-auth">
+        <div className="field"><label>Email</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} required /></div>
+        <div className="field"><label>Password</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} minLength={8} required /></div>
+        {message && <p className="status danger">{message}</p>}
+        <div className="actions">
+          <button type="submit" disabled={busy} className="btn primary" onClick={e=>submit(e,'login')}>Sign in</button>
+          <button type="button" disabled={busy} className="btn" onClick={e=>submit(e,'signup')}>Create account</button>
+        </div>
+      </form>}
+    </main>
+  </>
 }
