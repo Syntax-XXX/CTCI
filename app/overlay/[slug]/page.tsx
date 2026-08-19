@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
@@ -26,6 +26,12 @@ type Message = { id:string; user:string; name:string; text:string; color?:string
 type Badge = { id:string; slug:string; name:string; icon_text:string|null; icon_url:string|null; color:string; owner_id:string|null }
 type BadgeAssignment = { badge_id:string; twitch_login:string; owner_id:string|null }
 
+const OVERLAY_RESET_CSS = `
+html,body{margin:0!important;width:100%!important;height:100%!important;background:transparent!important;background-image:none!important;overflow:hidden!important}
+body:before{display:none!important;content:none!important}
+.overlay-root{position:fixed!important;inset:0!important;background:transparent!important;background-image:none!important;overflow:hidden!important;padding:0!important}
+`
+
 export default function OverlayPage(){
   const params=useParams<{slug:string}>()
   const supabase=useMemo(()=>createClient(),[])
@@ -36,26 +42,63 @@ export default function OverlayPage(){
   const[badges,setBadges]=useState<Record<string,Badge[]>>({})
   const[error,setError]=useState('')
   const[clock,setClock]=useState(Date.now())
+  const reconnectTimer=useRef<number|null>(null)
 
   useEffect(()=>{
-    let channel:any
-    ;(async()=>{
+    document.documentElement.style.background='transparent'
+    document.body.style.background='transparent'
+    document.body.style.backgroundImage='none'
+    return()=>{
+      document.documentElement.style.removeProperty('background')
+      document.body.style.removeProperty('background')
+      document.body.style.removeProperty('background-image')
+    }
+  },[])
+
+  useEffect(()=>{
+    let disposed=false
+    let channel:any=null
+
+    async function start(){
+      if(disposed)return
+      if(channel){await supabase.removeChannel(channel);channel=null}
+
       const{data,error}=await supabase.from('overlays').select('*').eq('slug',params.slug).eq('enabled',true).single()
       if(error||!data){setError('Overlay not found or disabled');return}
+
       const current=data as Overlay
+      setError('')
       setOverlay(current)
       await loadExtras(current.user_id,current.id,current.max_messages)
-      channel=supabase.channel(`ctci-overlay-${current.id}`)
+      if(disposed)return
+
+      channel=supabase.channel(`ctci-overlay-${current.id}-${Math.random().toString(36).slice(2)}`)
         .on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_events',filter:`overlay_id=eq.${current.id}`},payload=>{
-          setMessages(existing=>[...existing,toMessage(payload.new as EventRow)].slice(-100))
+          const next=toMessage(payload.new as EventRow)
+          setMessages(existing=>{
+            if(existing.some(message=>message.id===next.id))return existing
+            return[...existing,next].slice(-100)
+          })
         })
         .on('postgres_changes',{event:'UPDATE',schema:'public',table:'overlays',filter:`id=eq.${current.id}`},payload=>setOverlay(payload.new as Overlay))
         .on('postgres_changes',{event:'*',schema:'public',table:'chatter_styles',filter:`owner_id=eq.${current.user_id}`},()=>refreshStyles(current.user_id))
         .on('postgres_changes',{event:'*',schema:'public',table:'badge_assignments'},()=>refreshBadges(current.user_id))
         .on('postgres_changes',{event:'*',schema:'public',table:'badge_definitions'},()=>refreshBadges(current.user_id))
-        .subscribe()
-    })()
-    return()=>{if(channel)supabase.removeChannel(channel)}
+        .subscribe(status=>{
+          if(disposed)return
+          if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED'){
+            if(reconnectTimer.current)window.clearTimeout(reconnectTimer.current)
+            reconnectTimer.current=window.setTimeout(()=>{void start()},1500)
+          }
+        })
+    }
+
+    void start()
+    return()=>{
+      disposed=true
+      if(reconnectTimer.current)window.clearTimeout(reconnectTimer.current)
+      if(channel)void supabase.removeChannel(channel)
+    }
   },[params.slug,supabase])
 
   useEffect(()=>{
@@ -109,14 +152,14 @@ export default function OverlayPage(){
     setBadges(map)
   }
 
-  if(error)return <div className="overlay-root"><div className="msg danger">{error}</div></div>
-  if(!overlay)return <div className="overlay-root"/>
+  if(error)return <div className="overlay-root"><style>{OVERLAY_RESET_CSS}</style><div className="msg danger">{error}</div></div>
+  if(!overlay)return <div className="overlay-root"><style>{OVERLAY_RESET_CSS}</style></div>
 
   const active=messages.filter(message=>overlay.fade_seconds===0||clock-message.time.getTime()<overlay.fade_seconds*1000)
   const ordered=overlay.direction==='top-down'?active:[...active].reverse()
 
   return <div className={`overlay-root direction-${overlay.direction} theme-${overlay.theme} density-${overlay.density}`} style={{fontFamily:overlay.font_family,fontSize:overlay.font_size,fontWeight:overlay.font_weight}}>
-    <style>{fontCss+'\n'+overlay.custom_css}</style>
+    <style>{OVERLAY_RESET_CSS+'\n'+fontCss+'\n'+overlay.custom_css}</style>
     {ordered.slice(0,overlay.max_messages).map(message=>{
       const userKey=message.user.toLowerCase()
       const style=styles[userKey]
