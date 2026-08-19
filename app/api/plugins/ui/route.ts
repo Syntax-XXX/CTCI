@@ -5,6 +5,8 @@ import { createAdminSupabase } from '@/lib/supabase/admin'
 export const dynamic='force-dynamic'
 
 type Installation={id:string;plugin_id:string;version:string;enabled:boolean}
+type DashboardPluginResult={installationId:string;pluginId:string;name:string;version:string;cards:any[]}
+type OverlayPluginResult={pluginId:string;name:string;version:string;widgets:any[]}
 
 export async function GET(request:NextRequest){
   const surface=request.nextUrl.searchParams.get('surface')
@@ -38,22 +40,29 @@ export async function GET(request:NextRequest){
     const ids=[...new Set(active.map(i=>i.plugin_id))]
     const{data:versions,error:versionError}=await admin.from('plugin_versions').select('plugin_id,version,manifest').in('plugin_id',ids)
     if(versionError)throw versionError
-    const versionMap=new Map((versions||[]).map((row:any)=>[`${row.plugin_id}@${row.version}`,row.manifest]))
+    const versionMap=new Map<string,any>((versions||[]).map((row:any)=>[`${row.plugin_id}@${row.version}`,row.manifest]))
 
-    const plugins=active.flatMap(installation=>{
-      const manifest:any=versionMap.get(`${installation.plugin_id}@${installation.version}`)
-      if(!manifest?.permissions?.includes('ui.render')||!manifest.ui)return[]
-      if(surface==='dashboard'){
+    if(surface==='dashboard'){
+      const plugins:DashboardPluginResult[]=[]
+      for(const installation of active){
+        const manifest:any=versionMap.get(`${installation.plugin_id}@${installation.version}`)
+        if(!manifest?.permissions?.includes('ui.render')||!manifest.ui)continue
         const cards=Array.isArray(manifest.ui.dashboard)?manifest.ui.dashboard.filter((card:any)=>(card.placement||'overview')===placement):[]
-        if(!cards.length)return[]
-        return[{installationId:installation.id,pluginId:installation.plugin_id,name:String(manifest.name||installation.plugin_id),version:installation.version,cards}]
+        if(!cards.length)continue
+        plugins.push({installationId:installation.id,pluginId:installation.plugin_id,name:String(manifest.name||installation.plugin_id),version:installation.version,cards})
       }
-      const widgets=Array.isArray(manifest.ui.overlay)?manifest.ui.overlay:[]
-      if(!widgets.length)return[]
-      return[{pluginId:installation.plugin_id,name:String(manifest.name||installation.plugin_id),version:installation.version,widgets}]
-    })
+      return NextResponse.json({plugins},{headers:{'Cache-Control':'private, no-store'}})
+    }
 
-    return NextResponse.json({plugins},{headers:{'Cache-Control':surface==='overlay'?'public, max-age=15, stale-while-revalidate=30':'private, no-store'}})
+    const plugins:OverlayPluginResult[]=[]
+    for(const installation of active){
+      const manifest:any=versionMap.get(`${installation.plugin_id}@${installation.version}`)
+      if(!manifest?.permissions?.includes('ui.render')||!manifest.ui)continue
+      const widgets=Array.isArray(manifest.ui.overlay)?manifest.ui.overlay:[]
+      if(!widgets.length)continue
+      plugins.push({pluginId:installation.plugin_id,name:String(manifest.name||installation.plugin_id),version:installation.version,widgets})
+    }
+    return NextResponse.json({plugins},{headers:{'Cache-Control':'public, max-age=15, stale-while-revalidate=30'}})
   }catch(error){
     console.error('Plugin UI load failed',error)
     return NextResponse.json({error:'Failed to load plugin UI'},{status:500})
