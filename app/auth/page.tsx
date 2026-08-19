@@ -1,19 +1,21 @@
 'use client'
 
-import { FormEvent, useState } from 'react'
+import { SyntheticEvent, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
 export default function AuthPage() {
   const router = useRouter()
-  const supabase = createClient()
+  const supabase = useMemo(() => createClient(), [])
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
 
-  async function submit(e: FormEvent, mode: 'login' | 'signup') {
-    e.preventDefault(); setBusy(true); setMessage('')
+  async function submit(e: SyntheticEvent, mode: 'login' | 'signup') {
+    e.preventDefault()
+    setBusy(true)
+    setMessage('')
     const result = mode === 'login'
       ? await supabase.auth.signInWithPassword({ email, password })
       : await supabase.auth.signUp({ email, password })
@@ -31,8 +33,8 @@ export default function AuthPage() {
       <div className="field"><label>Password</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} minLength={8} required /></div>
       {message && <p className="status">{message}</p>}
       <div className="actions">
-        <button disabled={busy} className="btn primary" onClick={e=>submit(e,'login')}>Sign in</button>
-        <button disabled={busy} className="btn" onClick={e=>submit(e,'signup')}>Create account</button>
+        <button type="submit" disabled={busy} className="btn primary" onClick={e=>submit(e,'login')}>Sign in</button>
+        <button type="button" disabled={busy} className="btn" onClick={e=>submit(e,'signup')}>Create account</button>
       </div>
     </form>
   </main>
