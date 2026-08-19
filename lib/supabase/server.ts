@@ -4,6 +4,8 @@ import { cookies } from 'next/headers'
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://jkprxdjrpnfbfxzryhtq.supabase.co'
 const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_c4JpbBoCgtcJ8q3rqiuc7Q_heLb1GRw'
 
+type CookieWrite = { name: string; value: string; options?: any }
+
 export async function createServerSupabase() {
   const cookieStore = await cookies()
 
@@ -12,11 +14,11 @@ export async function createServerSupabase() {
       getAll() {
         return cookieStore.getAll()
       },
-      setAll(cookiesToSet) {
+      setAll(cookiesToSet: CookieWrite[]) {
         try {
           cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options))
         } catch {
-          // Server Components cannot always write cookies; proxy.ts refreshes them.
+          // Server Components cannot always write cookies; middleware.ts refreshes them.
         }
       },
     },
