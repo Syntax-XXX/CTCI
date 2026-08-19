@@ -26,11 +26,21 @@ type EventRow = { id:string; chatter_login:string; chatter_name:string; message_
 type Message = { id:string; user:string; name:string; text:string; color?:string|null; time:Date; fragments:Fragment[]; badges:any[] }
 type Badge = { id:string; slug:string; name:string; icon_text:string|null; icon_url:string|null; color:string; owner_id:string|null }
 type BadgeAssignment = { badge_id:string; twitch_login:string; owner_id:string|null }
+type Viewport = { width:number; height:number; scale:number }
 
 const OVERLAY_RESET_CSS = `
-html,body{margin:0!important;width:100%!important;height:100%!important;background:transparent!important;background-image:none!important;overflow:hidden!important}
+html,body,#__next{margin:0!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;background:transparent!important;background-image:none!important;overflow:hidden!important}
+html{font-size:100%!important}
 body:before{display:none!important;content:none!important}
-.overlay-root{position:fixed!important;inset:0!important;background:transparent!important;background-image:none!important;overflow:hidden!important;padding:0!important}
+*,*:before,*:after{box-sizing:border-box}
+.overlay-root{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;width:100dvw!important;height:100dvh!important;max-width:100%!important;max-height:100%!important;min-width:0!important;min-height:0!important;background:transparent!important;background-image:none!important;overflow:hidden!important;padding:var(--ctci-safe,8px)!important;contain:layout paint}
+.overlay-root .chat-message{max-width:100%!important;min-width:0!important;overflow-wrap:anywhere!important;word-break:break-word!important;white-space:normal!important;line-height:1.3!important;flex:0 0 auto!important}
+.overlay-root .chat-message strong,.overlay-root .timestamp{max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+.overlay-root .chat-emote{display:inline-block!important;width:auto!important;height:auto!important;max-width:min(2.5em,18vw)!important;max-height:1.45em!important;object-fit:contain!important;vertical-align:middle!important}
+.overlay-root .custom-badge{display:inline-flex!important;max-width:min(14em,45vw)!important;min-width:0!important;vertical-align:middle!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;font-size:.72em!important;line-height:1.15!important}
+.overlay-root .custom-badge img{display:block!important;width:auto!important;height:auto!important;max-width:2.2em!important;max-height:1.15em!important;object-fit:contain!important}
+.overlay-root .plugin-overlay-layer{max-width:100vw!important;max-height:100vh!important;overflow:hidden!important}
+@media (max-width:480px),(max-height:270px){.overlay-root .chat-message{line-height:1.2!important}.overlay-root .custom-badge{font-size:.64em!important}}
 `
 
 export default function OverlayPage(){
@@ -43,6 +53,7 @@ export default function OverlayPage(){
   const[badges,setBadges]=useState<Record<string,Badge[]>>({})
   const[error,setError]=useState('')
   const[clock,setClock]=useState(Date.now())
+  const[viewport,setViewport]=useState<Viewport>({width:1920,height:1080,scale:1})
   const reconnectTimer=useRef<number|null>(null)
 
   useEffect(()=>{
@@ -54,6 +65,22 @@ export default function OverlayPage(){
       document.body.style.removeProperty('background')
       document.body.style.removeProperty('background-image')
     }
+  },[])
+
+  useEffect(()=>{
+    let frame=0
+    const measure=()=>{
+      frame=0
+      const width=Math.max(1,window.innerWidth||document.documentElement.clientWidth||1920)
+      const height=Math.max(1,window.innerHeight||document.documentElement.clientHeight||1080)
+      const natural=Math.min(width/1920,height/1080)
+      setViewport({width,height,scale:clamp(natural,.5,2.5)})
+    }
+    const schedule=()=>{if(frame)cancelAnimationFrame(frame);frame=requestAnimationFrame(measure)}
+    measure()
+    window.addEventListener('resize',schedule,{passive:true})
+    window.visualViewport?.addEventListener('resize',schedule,{passive:true})
+    return()=>{if(frame)cancelAnimationFrame(frame);window.removeEventListener('resize',schedule);window.visualViewport?.removeEventListener('resize',schedule)}
   },[])
 
   useEffect(()=>{
@@ -156,12 +183,23 @@ export default function OverlayPage(){
   if(error)return <div className="overlay-root"><style>{OVERLAY_RESET_CSS}</style><div className="msg danger">{error}</div></div>
   if(!overlay)return <div className="overlay-root"><style>{OVERLAY_RESET_CSS}</style></div>
 
+  const scale=viewport.scale
+  const safe=clamp(Math.round(14*scale),4,48)
+  const baseFont=clamp(overlay.font_size*scale,10,192)
+  const usernameFont=clamp(overlay.username_font_size*scale,9,192)
+  const spacing=clamp(overlay.message_spacing*scale,0,96)
+  const radius=clamp(overlay.border_radius*scale,0,96)
+  const estimatedRow=Math.max(18,baseFont*1.55+spacing)
+  const availableHeight=Math.max(estimatedRow,viewport.height-safe*2)
+  const responsiveMax=Math.max(1,Math.floor(availableHeight/estimatedRow))
+  const visibleLimit=Math.max(1,Math.min(overlay.max_messages,responsiveMax))
   const active=messages.filter(message=>overlay.fade_seconds===0||clock-message.time.getTime()<overlay.fade_seconds*1000)
   const ordered=overlay.direction==='top-down'?active:[...active].reverse()
+  const rootStyle:any={fontFamily:overlay.font_family,fontSize:baseFont,fontWeight:overlay.font_weight,'--ctci-safe':`${safe}px`}
 
-  return <div className={`overlay-root direction-${overlay.direction} theme-${overlay.theme} density-${overlay.density}`} style={{fontFamily:overlay.font_family,fontSize:overlay.font_size,fontWeight:overlay.font_weight}}>
+  return <div className={`overlay-root direction-${overlay.direction} theme-${overlay.theme} density-${overlay.density}`} style={rootStyle} data-viewport={`${viewport.width}x${viewport.height}`}>
     <style>{OVERLAY_RESET_CSS+'\n'+fontCss+'\n'+overlay.custom_css}</style>
-    {ordered.slice(0,overlay.max_messages).map(message=>{
+    {ordered.slice(0,visibleLimit).map(message=>{
       const userKey=message.user.toLowerCase()
       const style=styles[userKey]
       if(style?.hidden)return null
@@ -172,24 +210,25 @@ export default function OverlayPage(){
       const glow=style?.glow_color||roleStyle.glow_color||(overlay.glow_enabled?overlay.glow_color:null)
       const customBadges=badges[userKey]||[]
       const classes=['msg','chat-message',`anim-${overlay.animation}`,messageRainbow?'rainbow-text':''].filter(Boolean).join(' ')
+      const messageFont=clamp((style?.font_size||overlay.font_size)*scale,10,192)
 
       return <div key={message.id} className={classes} style={{
         background:`rgba(${hex(overlay.bubble_color)},${overlay.bubble_opacity})`,
-        borderRadius:overlay.border_radius,
-        marginTop:overlay.message_spacing,
+        borderRadius:radius,
+        marginTop:spacing,
         color:style?.message_color||roleStyle.message_color||overlay.message_color,
         fontFamily:style?.font_family||roleStyle.font_family||overlay.font_family,
-        fontSize:style?.font_size||overlay.font_size,
+        fontSize:messageFont,
         fontWeight:style?.font_weight||overlay.font_weight,
-        outline:style?.highlight?'2px solid rgba(145,71,255,.7)':'none',
-        textShadow:glow?`0 0 8px ${glow},0 0 18px ${glow}`:undefined,
+        outline:style?.highlight?`${Math.max(1,2*scale)}px solid rgba(145,71,255,.7)`:'none',
+        textShadow:glow?`0 0 ${Math.max(4,8*scale)}px ${glow},0 0 ${Math.max(8,18*scale)}px ${glow}`:undefined,
       }}>
         {overlay.show_timestamps&&<span className="small timestamp">{message.time.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})} </span>}
         {customBadges.map(badge=><span className={`custom-badge badge-${badge.slug}`} key={badge.id} title={badge.name} style={{borderColor:badge.color,color:badge.color}}>{badge.icon_url?<img src={badge.icon_url} alt={badge.name}/>:badge.icon_text||badge.name}</span>)}
         {overlay.show_usernames&&<strong className={nameRainbow?'rainbow-text':''} style={{
           color:nameRainbow?undefined:style?.username_color||roleStyle.username_color||message.color||overlay.username_color,
           fontFamily:roleStyle.username_font_family||overlay.username_font_family,
-          fontSize:overlay.username_font_size,
+          fontSize:usernameFont,
         }}>{style?.icon?`${style.icon} `:''}{style?.nickname||message.name}</strong>}
         {' '}<MessageBody message={message} showEmotes={overlay.show_emotes}/>
       </div>
@@ -219,6 +258,7 @@ function toMessage(row:EventRow):Message{
   return{id:row.id,user:row.chatter_login,name:row.chatter_name||row.chatter_login,text:row.message_text,color:row.color,time:new Date(row.created_at),fragments:Array.isArray(row.fragments)?row.fragments:[],badges:Array.isArray(row.badges)?row.badges:[]}
 }
 
+function clamp(value:number,min:number,max:number){return Math.min(max,Math.max(min,Number.isFinite(value)?value:min))}
 function hex(value:string){
   const raw=value.replace('#','')
   const normalized=raw.length===3?raw.split('').map(char=>char+char).join(''):raw
