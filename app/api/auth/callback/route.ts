@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
     const supabase = await createServerSupabase()
 
     const { data: { user: currentUser } } = await supabase.auth.getUser()
-    let userId = currentUser?.id || null
+    let userId: string | null = currentUser?.id || null
 
     if (userId) {
       const { data: alreadyLinked } = await admin
@@ -45,8 +45,9 @@ export async function GET(request: NextRequest) {
 
       let authEmail: string
       if (existingProfile) {
-        userId = existingProfile.id
-        const { data: authUser, error: authLookupError } = await admin.auth.admin.getUserById(userId)
+        const existingUserId = existingProfile.id as string
+        userId = existingUserId
+        const { data: authUser, error: authLookupError } = await admin.auth.admin.getUserById(existingUserId)
         if (authLookupError) throw authLookupError
         if (!authUser.user?.email) throw new Error('Existing CTCI Twitch user has no Supabase auth email')
         authEmail = authUser.user.email
