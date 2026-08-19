@@ -26,9 +26,18 @@ export default function OverlayPage(){
     const map:Record<string,Style>={};(styleRes.data||[]).forEach((x:any)=>map[x.chatter_login]=x);setStyles(map)
     const css=(fontRes.data||[] as FontAsset[]).map((font)=>{const publicUrl=supabase.storage.from('ctci-fonts').getPublicUrl(font.storage_path).data.publicUrl;return `@font-face{font-family:${JSON.stringify(font.label)};src:url(${JSON.stringify(publicUrl)});font-display:swap;}`}).join('\n');setFontCss(css)
     const initial=((eventRes.data||[]) as ChatEvent[]).reverse().map(toMessage);setMessages(initial)
-    channel=supabase.channel(`ctci-overlay-${data.id}`).on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_events',filter:`overlay_id=eq.${data.id}`},(payload)=>{
-      const msg=toMessage(payload.new as ChatEvent);setMessages(prev=>[...prev,msg].slice(-100))
-    }).subscribe()
+    channel=supabase.channel(`ctci-overlay-${data.id}`)
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_events',filter:`overlay_id=eq.${data.id}`},(payload)=>{
+        const msg=toMessage(payload.new as ChatEvent);setMessages(prev=>[...prev,msg].slice(-100))
+      })
+      .on('postgres_changes',{event:'UPDATE',schema:'public',table:'overlays',filter:`id=eq.${data.id}`},(payload)=>{
+        setOverlay(payload.new as Overlay)
+      })
+      .on('postgres_changes',{event:'*',schema:'public',table:'chatter_styles',filter:`owner_id=eq.${data.user_id}`},async()=>{
+        const latest=await supabase.from('chatter_styles').select('*').eq('owner_id',data.user_id)
+        const next:Record<string,Style>={};(latest.data||[]).forEach((x:any)=>next[x.chatter_login]=x);setStyles(next)
+      })
+      .subscribe()
   })();return()=>{if(channel)supabase.removeChannel(channel)}},[params.slug,supabase])
 
   useEffect(()=>{if(!overlay?.fade_seconds)return;const timer=setInterval(()=>setClock(Date.now()),1000);return()=>clearInterval(timer)},[overlay?.fade_seconds])
