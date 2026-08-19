@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
+import { PluginOverlaySurface } from '@/components/PluginSurface'
 import { createClient } from '@/lib/supabase/client'
 
 type Overlay = {
@@ -193,6 +194,7 @@ export default function OverlayPage(){
         {' '}<MessageBody message={message} showEmotes={overlay.show_emotes}/>
       </div>
     })}
+    <PluginOverlaySurface slug={params.slug}/>
   </div>
 }
 
