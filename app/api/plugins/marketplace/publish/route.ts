@@ -6,18 +6,29 @@ import { inspectPluginZip } from '@/lib/plugins'
 
 export const runtime='nodejs'
 
-async function requireAdmin(){
+// Marketplace publishing is intentionally owner-only.
+// This is the immutable CTCI auth/profile UUID for dc_syntax_xxx.
+const MARKETPLACE_OWNER_USER_ID='a1c392cc-b897-4b67-838e-1e537d8a03a7'
+
+async function requireMarketplaceOwner(){
   const sb=await createServerSupabase()
   const{data:{user}}=await sb.auth.getUser()
-  if(!user)return null
+  if(!user||user.id!==MARKETPLACE_OWNER_USER_ID)return null
+
   const admin=createAdminSupabase()
-  const{data}=await admin.from('platform_admins').select('user_id').eq('user_id',user.id).maybeSingle()
-  return data?{user,admin}:null
+  const{data:profile,error}=await admin
+    .from('profiles')
+    .select('id,twitch_login')
+    .eq('id',user.id)
+    .maybeSingle()
+
+  if(error||!profile||String(profile.twitch_login||'').toLowerCase()!=='dc_syntax_xxx')return null
+  return{user,admin}
 }
 
 export async function POST(request:NextRequest){
-  const auth=await requireAdmin()
-  if(!auth)return NextResponse.json({error:'Platform admin required'},{status:403})
+  const auth=await requireMarketplaceOwner()
+  if(!auth)return NextResponse.json({error:'Marketplace publishing is restricted to the CTCI owner'},{status:403})
   try{
     const form=await request.formData(),file=form.get('file')
     if(!(file instanceof File))return NextResponse.json({error:'Plugin ZIP is required'},{status:400})
