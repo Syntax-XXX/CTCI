@@ -18,17 +18,11 @@ export async function GET() {
   authorize.searchParams.set('response_type', 'code')
   authorize.searchParams.set('redirect_uri', DISCORD_REDIRECT_URI)
   authorize.searchParams.set('scope', 'identify guilds bot applications.commands')
-  authorize.searchParams.set('permissions', '0')
+  authorize.searchParams.set('permissions', '3072')
   authorize.searchParams.set('state', state)
   authorize.searchParams.set('prompt', 'consent')
 
   const response = NextResponse.redirect(authorize)
-  response.cookies.set('ctci_discord_state', state, {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 10 * 60,
-  })
+  response.cookies.set('ctci_discord_state', state, {httpOnly:true,secure:true,sameSite:'lax',path:'/',maxAge:10*60})
   return response
 }
