@@ -1,11 +1,182 @@
 'use client'
 
-import {useEffect,useMemo,useState} from'react'
-import{useParams}from'next/navigation'
-import{createClient}from'@/lib/supabase/client'
-type O={id:string;user_id:string;slug:string;channel_login:string|null;font_family:string;username_font_family:string;font_size:number;username_font_size:number;font_weight:number;message_spacing:number;username_color:string;message_color:string;background_color:string;background_opacity:number;bubble_color:string;bubble_opacity:number;border_radius:number;show_usernames:boolean;show_timestamps:boolean;show_emotes:boolean;animation:string;direction:string;custom_css:string;max_messages:number;fade_seconds:number;theme:string;density:string;rainbow_mode:string;glow_enabled:boolean;glow_color:string;role_styles:Record<string,any>}
-type S={chatter_login:string;nickname:string|null;username_color:string|null;message_color:string|null;font_family:string|null;font_size:number|null;font_weight:number|null;highlight:boolean;hidden:boolean;icon:string|null;glow_color:string|null}
-type F={type:string;text:string;emote?:{id:string}|null};type E={id:string;chatter_login:string;chatter_name:string;message_text:string;color:string|null;badges:any[];fragments:F[];created_at:string};type M={id:string;user:string;name:string;text:string;color?:string|null;time:Date;fragments:F[];badges:any[]}
-type B={id:string;slug:string;name:string;icon_text:string|null;icon_url:string|null;color:string;owner_id:string|null};type BA={badge_id:string;twitch_login:string;owner_id:string|null}
-export default function Page(){const p=useParams<{slug:string}>(),sb=useMemo(()=>createClient(),[]);const[o,setO]=useState<O|null>(null),[styles,setStyles]=useState<Record<string,S>>({}),[msgs,setMsgs]=useState<M[]>([]),[fontCss,setFontCss]=useState(''),[badges,setBadges]=useState<Record<string,B[]>>({}),[err,setErr]=useState(''),[clock,setClock]=useState(Date.now());useEffect(()=>{let ch:any;(async()=>{const{data,error}=await sb.from('overlays').select('*').eq('slug',p.slug).eq('enabled',true).single();if(error||!data){setErr('Overlay not found or disabled');return}setO(data as O);await loadExtras(data.user_id,data.id,data.max_messages);ch=sb.channel(`ctci-overlay-${data.id}`).on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_events',filter:`overlay_id=eq.${data.id}`},x=>setMsgs(v=>[...v,toMsg(x.new as E)].slice(-100))).on('postgres_changes',{event:'UPDATE',schema:'public',table:'overlays',filter:`id=eq.${data.id}`},x=>setO(x.new as O)).on('postgres_changes',{event:'*',schema:'public',table:'chatter_styles',filter:`owner_id=eq.${data.user_id}`},()=>refreshStyles(data.user_id)).on('postgres_changes',{event:'*',schema:'public',table:'badge_assignments'},()=>refreshBadges(data.user_id)).on('postgres_changes',{event:'*',schema:'public',table:'badge_definitions'},()=>refreshBadges(data.user_id)).subscribe()})();return()=>{if(ch)sb.removeChannel(ch)}},[p.slug,sb]);useEffect(()=>{if(!o?.fade_seconds)return;const t=setInterval(()=>setClock(Date.now()),1000);return()=>clearInterval(t)},[o?.fade_seconds]);async function loadExtras(uid:string,oid:string,max:number){const[st,fa,ev]=await Promise.all([sb.from('chatter_styles').select('*').eq('owner_id',uid),sb.from('font_assets').select('label,storage_path').eq('owner_id',uid),sb.from('chat_events').select('id,chatter_login,chatter_name,message_text,color,badges,fragments,created_at').eq('overlay_id',oid).order('created_at',{ascending:false}).limit(max)]);const sm:Record<string,S>={};(st.data||[]).forEach((x:any)=>sm[x.chatter_login]=x);setStyles(sm);setFontCss((fa.data||[]).map((f:any)=>`@font-face{font-family:${JSON.stringify(f.label)};src:url(${JSON.stringify(sb.storage.from('ctci-fonts').getPublicUrl(f.storage_path).data.publicUrl)});font-display:swap}`).join('\n'));setMsgs(((ev.data||[])as E[]).reverse().map(toMsg));await refreshBadges(uid)}async function refreshStyles(uid:string){const r=await sb.from('chatter_styles').select('*').eq('owner_id',uid),m:Record<string,S>={};(r.data||[]).forEach((x:any)=>m[x.chatter_login]=x);setStyles(m)}async function refreshBadges(uid:string){const[d,a]=await Promise.all([sb.from('badge_definitions').select('id,slug,name,icon_text,icon_url,color,owner_id').eq('enabled',true),sb.from('badge_assignments').select('badge_id,twitch_login,owner_id')]);const defs=new Map((d.data||[]).filter((x:any)=>x.owner_id===null||x.owner_id===uid).map((x:any)=>[x.id,x as B])),map:Record<string,B[]>={};for(const x of(a.data||[])as BA[]{if(x.owner_id!==null&&x.owner_id!==uid)continue;const def=defs.get(x.badge_id);if(!def)continue;(map[x.twitch_login]??=[]).push(def)}setBadges(map)}if(err)return <div className="overlay-root"><div className="msg danger">{err}</div></div>;if(!o)return <div className="overlay-root"/>;const active=msgs.filter(m=>o.fade_seconds===0||clock-m.time.getTime()<o.fade_seconds*1000),ordered=o.direction==='top-down'?active:[...active].reverse();return <div className={`overlay-root direction-${o.direction} theme-${o.theme} density-${o.density}`} style={{fontFamily:o.font_family,fontSize:o.font_size,fontWeight:o.font_weight}}><style>{fontCss+'\n'+o.custom_css}</style>{ordered.slice(0,o.max_messages).map(m=>{const s=styles[m.user.toLowerCase()];if(s?.hidden)return null;const role=roleFor(m.badges),rs=o.role_styles?.[role]||{},mr=o.rainbow_mode==='messages'||o.rainbow_mode==='all',nr=o.rainbow_mode==='usernames'||o.rainbow_mode==='all',glow=s?.glow_color||rs.glow_color||(o.glow_enabled?o.glow_color:null),custom=badges[m.user.toLowerCase()]||[];return <div key={m.id} className={`msg chat-message anim-${o.animation}${mr?' rainbow-text':''}`} style={{background:`rgba(${hex(o.bubble_color)},${o.bubble_opacity})`,borderRadius:o.border_radius,marginTop:o.message_spacing,color:s?.message_color||rs.message_color||o.message_color,fontFamily:s?.font_family||rs.font_family||o.font_family,fontSize:s?.font_size||o.font_size,fontWeight:s?.font_weight||o.font_weight,outline:s?.highlight?'2px solid rgba(145,71,255,.7)':'none',textShadow:glow?`0 0 8px ${glow},0 0 18px ${glow}`:undefined}}>{o.show_timestamps&&<span className="small timestamp">{m.time.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})} </span>}{custom.map(b=><span className={`custom-badge badge-${b.slug}`} key={b.id} title={b.name} style={{borderColor:b.color,color:b.color}}>{b.icon_url?<img src={b.icon_url} alt={b.name}/>:b.icon_text||b.name}</span>)}{o.show_usernames&&<strong className={nr?'rainbow-text':''} style={{color:nr?undefined:s?.username_color||rs.username_color||m.color||o.username_color,fontFamily:rs.username_font_family||o.username_font_family,fontSize:o.username_font_size}}>{s?.icon?`${s.icon} `:''}{s?.nickname||m.name}</strong>} <Body m={m} emotes={o.show_emotes}/></div>})}</div>}
-function Body({m,emotes}:{m:M;emotes:boolean}){if(!emotes||!m.fragments?.length)return <>{m.text}</>;return <>{m.fragments.map((f,i)=>f.type==='emote'&&f.emote?.id?<img key={i} className="chat-emote" alt={f.text} src={`https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(f.emote.id)}/static/dark/2.0`}/>:<span key={i}>{f.text}</span>)}</>};function roleFor(b:any[]){const x=(b||[]).map(v=>String(v?.set_id||v?.id||'').toLowerCase());if(x.includes('broadcaster'))return'broadcaster';if(x.includes('moderator'))return'moderator';if(x.includes('vip'))return'vip';if(x.includes('founder'))return'founder';if(x.includes('subscriber'))return'subscriber';return'viewer'}function toMsg(x:E):M{return{id:x.id,user:x.chatter_login,name:x.chatter_name||x.chatter_login,text:x.message_text,color:x.color,time:new Date(x.created_at),fragments:Array.isArray(x.fragments)?x.fragments:[],badges:Array.isArray(x.badges)?x.badges:[]}}function hex(v:string){const h=v.replace('#',''),n=parseInt(h.length===3?h.split('').map(x=>x+x).join(''):h,16);return`${n>>16&255},${n>>8&255},${n&255}`}
+import { useEffect, useMemo, useState } from 'react'
+import { useParams } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
+
+type Overlay = {
+  id:string; user_id:string; slug:string; channel_login:string|null;
+  font_family:string; username_font_family:string; font_size:number; username_font_size:number; font_weight:number; message_spacing:number;
+  username_color:string; message_color:string; background_color:string; background_opacity:number;
+  bubble_color:string; bubble_opacity:number; border_radius:number;
+  show_usernames:boolean; show_timestamps:boolean; show_emotes:boolean;
+  animation:string; direction:string; custom_css:string; max_messages:number; fade_seconds:number;
+  theme:string; density:string; rainbow_mode:string; glow_enabled:boolean; glow_color:string; role_styles:Record<string,any>;
+}
+
+type ChatterStyle = {
+  chatter_login:string; nickname:string|null; username_color:string|null; message_color:string|null;
+  font_family:string|null; font_size:number|null; font_weight:number|null; highlight:boolean; hidden:boolean;
+  icon:string|null; glow_color:string|null;
+}
+
+type Fragment = { type:string; text:string; emote?:{id:string}|null }
+type EventRow = { id:string; chatter_login:string; chatter_name:string; message_text:string; color:string|null; badges:any[]; fragments:Fragment[]; created_at:string }
+type Message = { id:string; user:string; name:string; text:string; color?:string|null; time:Date; fragments:Fragment[]; badges:any[] }
+type Badge = { id:string; slug:string; name:string; icon_text:string|null; icon_url:string|null; color:string; owner_id:string|null }
+type BadgeAssignment = { badge_id:string; twitch_login:string; owner_id:string|null }
+
+export default function OverlayPage(){
+  const params=useParams<{slug:string}>()
+  const supabase=useMemo(()=>createClient(),[])
+  const[overlay,setOverlay]=useState<Overlay|null>(null)
+  const[styles,setStyles]=useState<Record<string,ChatterStyle>>({})
+  const[messages,setMessages]=useState<Message[]>([])
+  const[fontCss,setFontCss]=useState('')
+  const[badges,setBadges]=useState<Record<string,Badge[]>>({})
+  const[error,setError]=useState('')
+  const[clock,setClock]=useState(Date.now())
+
+  useEffect(()=>{
+    let channel:any
+    ;(async()=>{
+      const{data,error}=await supabase.from('overlays').select('*').eq('slug',params.slug).eq('enabled',true).single()
+      if(error||!data){setError('Overlay not found or disabled');return}
+      const current=data as Overlay
+      setOverlay(current)
+      await loadExtras(current.user_id,current.id,current.max_messages)
+      channel=supabase.channel(`ctci-overlay-${current.id}`)
+        .on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_events',filter:`overlay_id=eq.${current.id}`},payload=>{
+          setMessages(existing=>[...existing,toMessage(payload.new as EventRow)].slice(-100))
+        })
+        .on('postgres_changes',{event:'UPDATE',schema:'public',table:'overlays',filter:`id=eq.${current.id}`},payload=>setOverlay(payload.new as Overlay))
+        .on('postgres_changes',{event:'*',schema:'public',table:'chatter_styles',filter:`owner_id=eq.${current.user_id}`},()=>refreshStyles(current.user_id))
+        .on('postgres_changes',{event:'*',schema:'public',table:'badge_assignments'},()=>refreshBadges(current.user_id))
+        .on('postgres_changes',{event:'*',schema:'public',table:'badge_definitions'},()=>refreshBadges(current.user_id))
+        .subscribe()
+    })()
+    return()=>{if(channel)supabase.removeChannel(channel)}
+  },[params.slug,supabase])
+
+  useEffect(()=>{
+    if(!overlay?.fade_seconds)return
+    const timer=window.setInterval(()=>setClock(Date.now()),1000)
+    return()=>window.clearInterval(timer)
+  },[overlay?.fade_seconds])
+
+  async function loadExtras(userId:string,overlayId:string,max:number){
+    const[styleRes,fontRes,eventRes]=await Promise.all([
+      supabase.from('chatter_styles').select('*').eq('owner_id',userId),
+      supabase.from('font_assets').select('label,storage_path').eq('owner_id',userId),
+      supabase.from('chat_events').select('id,chatter_login,chatter_name,message_text,color,badges,fragments,created_at').eq('overlay_id',overlayId).order('created_at',{ascending:false}).limit(max),
+    ])
+    const styleMap:Record<string,ChatterStyle>={}
+    ;(styleRes.data||[]).forEach((row:any)=>{styleMap[String(row.chatter_login).toLowerCase()]=row as ChatterStyle})
+    setStyles(styleMap)
+    setFontCss((fontRes.data||[]).map((font:any)=>{
+      const url=supabase.storage.from('ctci-fonts').getPublicUrl(font.storage_path).data.publicUrl
+      return `@font-face{font-family:${JSON.stringify(font.label)};src:url(${JSON.stringify(url)});font-display:swap}`
+    }).join('\n'))
+    setMessages(((eventRes.data||[]) as EventRow[]).reverse().map(toMessage))
+    await refreshBadges(userId)
+  }
+
+  async function refreshStyles(userId:string){
+    const result=await supabase.from('chatter_styles').select('*').eq('owner_id',userId)
+    const map:Record<string,ChatterStyle>={}
+    ;(result.data||[]).forEach((row:any)=>{map[String(row.chatter_login).toLowerCase()]=row as ChatterStyle})
+    setStyles(map)
+  }
+
+  async function refreshBadges(userId:string){
+    const[definitions,assignments]=await Promise.all([
+      supabase.from('badge_definitions').select('id,slug,name,icon_text,icon_url,color,owner_id').eq('enabled',true),
+      supabase.from('badge_assignments').select('badge_id,twitch_login,owner_id'),
+    ])
+    const definitionMap=new Map<string,Badge>()
+    for(const row of definitions.data||[]){
+      const badge=row as Badge
+      if(badge.owner_id===null||badge.owner_id===userId)definitionMap.set(badge.id,badge)
+    }
+    const map:Record<string,Badge[]>={}
+    for(const row of(assignments.data||[]) as BadgeAssignment[]){
+      if(row.owner_id!==null&&row.owner_id!==userId)continue
+      const badge=definitionMap.get(row.badge_id)
+      if(!badge)continue
+      const login=row.twitch_login.toLowerCase()
+      ;(map[login]??=[]).push(badge)
+    }
+    setBadges(map)
+  }
+
+  if(error)return <div className="overlay-root"><div className="msg danger">{error}</div></div>
+  if(!overlay)return <div className="overlay-root"/>
+
+  const active=messages.filter(message=>overlay.fade_seconds===0||clock-message.time.getTime()<overlay.fade_seconds*1000)
+  const ordered=overlay.direction==='top-down'?active:[...active].reverse()
+
+  return <div className={`overlay-root direction-${overlay.direction} theme-${overlay.theme} density-${overlay.density}`} style={{fontFamily:overlay.font_family,fontSize:overlay.font_size,fontWeight:overlay.font_weight}}>
+    <style>{fontCss+'\n'+overlay.custom_css}</style>
+    {ordered.slice(0,overlay.max_messages).map(message=>{
+      const userKey=message.user.toLowerCase()
+      const style=styles[userKey]
+      if(style?.hidden)return null
+      const role=roleFor(message.badges)
+      const roleStyle=overlay.role_styles?.[role]||{}
+      const messageRainbow=overlay.rainbow_mode==='messages'||overlay.rainbow_mode==='all'
+      const nameRainbow=overlay.rainbow_mode==='usernames'||overlay.rainbow_mode==='all'
+      const glow=style?.glow_color||roleStyle.glow_color||(overlay.glow_enabled?overlay.glow_color:null)
+      const customBadges=badges[userKey]||[]
+      const classes=['msg','chat-message',`anim-${overlay.animation}`,messageRainbow?'rainbow-text':''].filter(Boolean).join(' ')
+
+      return <div key={message.id} className={classes} style={{
+        background:`rgba(${hex(overlay.bubble_color)},${overlay.bubble_opacity})`,
+        borderRadius:overlay.border_radius,
+        marginTop:overlay.message_spacing,
+        color:style?.message_color||roleStyle.message_color||overlay.message_color,
+        fontFamily:style?.font_family||roleStyle.font_family||overlay.font_family,
+        fontSize:style?.font_size||overlay.font_size,
+        fontWeight:style?.font_weight||overlay.font_weight,
+        outline:style?.highlight?'2px solid rgba(145,71,255,.7)':'none',
+        textShadow:glow?`0 0 8px ${glow},0 0 18px ${glow}`:undefined,
+      }}>
+        {overlay.show_timestamps&&<span className="small timestamp">{message.time.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})} </span>}
+        {customBadges.map(badge=><span className={`custom-badge badge-${badge.slug}`} key={badge.id} title={badge.name} style={{borderColor:badge.color,color:badge.color}}>{badge.icon_url?<img src={badge.icon_url} alt={badge.name}/>:badge.icon_text||badge.name}</span>)}
+        {overlay.show_usernames&&<strong className={nameRainbow?'rainbow-text':''} style={{
+          color:nameRainbow?undefined:style?.username_color||roleStyle.username_color||message.color||overlay.username_color,
+          fontFamily:roleStyle.username_font_family||overlay.username_font_family,
+          fontSize:overlay.username_font_size,
+        }}>{style?.icon?`${style.icon} `:''}{style?.nickname||message.name}</strong>}
+        {' '}<MessageBody message={message} showEmotes={overlay.show_emotes}/>
+      </div>
+    })}
+  </div>
+}
+
+function MessageBody({message,showEmotes}:{message:Message;showEmotes:boolean}){
+  if(!showEmotes||!message.fragments?.length)return <>{message.text}</>
+  return <>{message.fragments.map((fragment,index)=>fragment.type==='emote'&&fragment.emote?.id
+    ?<img key={index} className="chat-emote" alt={fragment.text} src={`https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(fragment.emote.id)}/static/dark/2.0`}/>
+    :<span key={index}>{fragment.text}</span>)}</>
+}
+
+function roleFor(badges:any[]){
+  const ids=(badges||[]).map(value=>String(value?.set_id||value?.id||'').toLowerCase())
+  if(ids.includes('broadcaster'))return'broadcaster'
+  if(ids.includes('moderator'))return'moderator'
+  if(ids.includes('vip'))return'vip'
+  if(ids.includes('founder'))return'founder'
+  if(ids.includes('subscriber'))return'subscriber'
+  return'viewer'
+}
+
+function toMessage(row:EventRow):Message{
+  return{id:row.id,user:row.chatter_login,name:row.chatter_name||row.chatter_login,text:row.message_text,color:row.color,time:new Date(row.created_at),fragments:Array.isArray(row.fragments)?row.fragments:[],badges:Array.isArray(row.badges)?row.badges:[]}
+}
+
+function hex(value:string){
+  const raw=value.replace('#','')
+  const normalized=raw.length===3?raw.split('').map(char=>char+char).join(''):raw
+  const number=parseInt(normalized,16)
+  return`${(number>>16)&255},${(number>>8)&255},${number&255}`
+}
