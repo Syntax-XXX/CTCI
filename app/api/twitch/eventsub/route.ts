@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
     if (parsed) {
       const result = await executeCommand({admin,ownerId:profile.id,channelTwitchUserId:event.broadcaster_user_id,actor:{twitchUserId:event.chatter_user_id,login:String(event.chatter_user_login||'').toLowerCase(),roles:getRoles(event)},parsed})
       if (result.handled) {
-        let response = result.success && 'message' in result ? result.message : undefined
+        let response:string|undefined = result.success && 'message' in result && typeof result.message==='string' ? result.message : undefined
         if (result.success && parsed.command === 'help') response = await buildHelpMessage(admin, profile.id, overlay.command_prefix || 'CC!', parsed.args[0])
         if (response) await replyInTwitch(admin, profile.id, event.broadcaster_user_id, event.message_id, response)
         await mirrorToDiscord(admin, profile.id, event, text, true)
