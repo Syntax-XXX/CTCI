@@ -14,6 +14,14 @@ export type PluginManifest = {
   id:string;name:string;version:string;author:string;description?:string;apiVersion:string;entry:string;permissions:string[]
   commands?:Array<{name:string;aliases?:string[];description?:string;permissions?:string[]}>
   configSchema?:Record<string,unknown>
+  ui?:{
+    dashboard?:Array<{
+      id:string;title:string;description?:string;placement?:'overview'|'plugins'|'commands'|'badges';
+      blocks?:Array<Record<string,unknown>>;
+      settings?:Array<Record<string,unknown>>;
+    }>;
+    overlay?:Array<Record<string,unknown>>
+  }
 }
 
 export function inspectPluginZip(bytes: Uint8Array) {
@@ -74,7 +82,60 @@ function validateManifest(m:any): asserts m is PluginManifest {
       if(command.permissions!==undefined){if(!Array.isArray(command.permissions)||command.permissions.length>8)throw new Error(`Invalid permissions for command ${command.name}`);for(const permission of command.permissions)if(!['viewer','subscriber','vip','moderator','broadcaster'].includes(String(permission)))throw new Error(`Invalid command permission for ${command.name}`)}
     }
   }
+  validateUI(m.ui,m.permissions)
 }
+
+function validateUI(ui:any,permissions:string[]){
+  if(ui===undefined)return
+  if(!permissions.includes('ui.render'))throw new Error('ui.render permission is required when plugin.json declares ui contributions')
+  if(!ui||typeof ui!=='object'||Array.isArray(ui))throw new Error('ui must be an object')
+  if(ui.dashboard!==undefined){
+    if(!Array.isArray(ui.dashboard)||ui.dashboard.length>20)throw new Error('ui.dashboard must contain at most 20 cards')
+    for(const card of ui.dashboard){
+      if(!card||typeof card!=='object'||typeof card.id!=='string'||!/^[a-z0-9][a-z0-9-]{0,31}$/.test(card.id))throw new Error('Invalid dashboard card id')
+      if(typeof card.title!=='string'||!card.title.trim()||card.title.length>100)throw new Error(`Invalid title for dashboard card ${card.id}`)
+      if(card.description!==undefined&&(typeof card.description!=='string'||card.description.length>500))throw new Error(`Invalid description for dashboard card ${card.id}`)
+      if(card.placement!==undefined&&!['overview','plugins','commands','badges'].includes(card.placement))throw new Error(`Invalid placement for dashboard card ${card.id}`)
+      if(card.blocks!==undefined){if(!Array.isArray(card.blocks)||card.blocks.length>30)throw new Error(`Too many blocks in dashboard card ${card.id}`);for(const block of card.blocks)validateDashboardBlock(block,card.id)}
+      if(card.settings!==undefined){if(!permissions.includes('config.read')||!permissions.includes('config.write'))throw new Error(`Dashboard settings in ${card.id} require config.read and config.write`);if(!Array.isArray(card.settings)||card.settings.length>30)throw new Error(`Too many settings in dashboard card ${card.id}`);for(const field of card.settings)validateSetting(field,card.id)}
+    }
+  }
+  if(ui.overlay!==undefined){
+    if(!Array.isArray(ui.overlay)||ui.overlay.length>40)throw new Error('ui.overlay must contain at most 40 widgets')
+    for(const widget of ui.overlay)validateOverlayWidget(widget)
+  }
+}
+
+function validateDashboardBlock(block:any,cardId:string){
+  if(!block||typeof block!=='object')throw new Error(`Invalid UI block in ${cardId}`)
+  if(!['heading','text','stat','badge','image','link','progress','divider'].includes(block.type))throw new Error(`Unsupported UI block type in ${cardId}`)
+  for(const key of ['text','label','value','alt'])if(block[key]!==undefined&&(typeof block[key]!=='string'||block[key].length>500))throw new Error(`Invalid ${key} in ${cardId}`)
+  if(block.type==='image')validateExternalAssetUrl(block.src,`image in ${cardId}`)
+  if(block.type==='link'){if(typeof block.label!=='string'||!block.label.trim()||block.label.length>100)throw new Error(`Invalid link label in ${cardId}`);validateLink(block.href,cardId)}
+  if(block.type==='progress'){if(typeof block.value!=='number'||!Number.isFinite(block.value))throw new Error(`Invalid progress value in ${cardId}`);if(block.max!==undefined&&(typeof block.max!=='number'||!Number.isFinite(block.max)||block.max<=0))throw new Error(`Invalid progress max in ${cardId}`)}
+}
+
+function validateSetting(field:any,cardId:string){
+  if(!field||typeof field!=='object'||typeof field.key!=='string'||!/^[a-zA-Z0-9_.-]{1,64}$/.test(field.key))throw new Error(`Invalid setting key in ${cardId}`)
+  if(typeof field.label!=='string'||!field.label.trim()||field.label.length>100)throw new Error(`Invalid setting label in ${cardId}`)
+  if(!['text','number','boolean','color','select'].includes(field.type))throw new Error(`Invalid setting type in ${cardId}`)
+  if(field.description!==undefined&&(typeof field.description!=='string'||field.description.length>300))throw new Error(`Invalid setting description in ${cardId}`)
+  if(field.type==='select'){if(!Array.isArray(field.options)||field.options.length<1||field.options.length>50)throw new Error(`Select setting ${field.key} requires 1-50 options`);for(const option of field.options)if(!option||typeof option.label!=='string'||typeof option.value!=='string'||option.label.length>100||option.value.length>100)throw new Error(`Invalid option for setting ${field.key}`)}
+  for(const key of ['min','max','step'])if(field[key]!==undefined&&(typeof field[key]!=='number'||!Number.isFinite(field[key])))throw new Error(`Invalid ${key} for setting ${field.key}`)
+}
+
+function validateOverlayWidget(widget:any){
+  if(!widget||typeof widget!=='object'||typeof widget.id!=='string'||!/^[a-z0-9][a-z0-9-]{0,31}$/.test(widget.id))throw new Error('Invalid overlay widget id')
+  if(!['text','image','box','progress'].includes(widget.type))throw new Error(`Unsupported overlay widget type: ${widget.type}`)
+  if(widget.text!==undefined&&(typeof widget.text!=='string'||widget.text.length>500))throw new Error(`Invalid text in overlay widget ${widget.id}`)
+  if(widget.type==='image')validateExternalAssetUrl(widget.src,`overlay widget ${widget.id}`)
+  const numericBounds:Record<string,[number,number]>={x:[0,100],y:[0,100],width:[1,100],height:[1,100],opacity:[0,1],fontSize:[8,200],borderRadius:[0,200],zIndex:[-10,100],value:[-1e9,1e9],max:[0.000001,1e9]}
+  for(const[key,[min,max]]of Object.entries(numericBounds)){if(widget[key]!==undefined&&(typeof widget[key]!=='number'||!Number.isFinite(widget[key])||widget[key]<min||widget[key]>max))throw new Error(`Invalid ${key} in overlay widget ${widget.id}`)}
+  for(const key of ['color','background'])if(widget[key]!==undefined&&(typeof widget[key]!=='string'||!/^(#[0-9a-fA-F]{3,8}|rgba?\([0-9., %]+\)|transparent)$/.test(widget[key])))throw new Error(`Invalid ${key} in overlay widget ${widget.id}`)
+}
+
+function validateExternalAssetUrl(value:any,label:string){if(typeof value!=='string'||value.length>1000)throw new Error(`Invalid URL for ${label}`);let url:URL;try{url=new URL(value)}catch{throw new Error(`Invalid URL for ${label}`)}if(url.protocol!=='https:')throw new Error(`${label} must use HTTPS`)}
+function validateLink(value:any,cardId:string){if(typeof value!=='string'||value.length>1000)throw new Error(`Invalid link in ${cardId}`);if(value.startsWith('/')&&!value.startsWith('//'))return;let url:URL;try{url=new URL(value)}catch{throw new Error(`Invalid link in ${cardId}`)}if(url.protocol!=='https:')throw new Error(`Links in ${cardId} must use HTTPS or an internal path`)}
 
 function validatePath(path:string) {
   if (!path || path.length > 240 || path.startsWith('/') || path.startsWith('\\') || /^[A-Za-z]:/.test(path)) throw new Error(`Unsafe archive path: ${path}`)
