@@ -11,6 +11,7 @@ export default function AuthPage() {
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
+  const [showLegacy, setShowLegacy] = useState(false)
 
   async function submit(e: SyntheticEvent, mode: 'login' | 'signup') {
     e.preventDefault()
@@ -27,8 +28,18 @@ export default function AuthPage() {
 
   return <main className="auth-card">
     <div className="brand">CTCI <span>Chat</span></div>
-    <p className="muted">Sign in to configure your Twitch overlay.</p>
-    <form>
+    <h1 className="auth-title">Sign in with Twitch</h1>
+    <p className="muted">One Twitch authorization creates your CTCI account, connects your channel, and enables chat ingestion for your overlay.</p>
+
+    <a className="btn twitch-btn" href="/api/auth/twitch">
+      <span className="twitch-mark">◈</span>
+      Continue with Twitch
+    </a>
+    <p className="small muted auth-note">CTCI uses one application-wide Twitch Client ID. Every streamer authorizes that same app and receives their own private OAuth tokens.</p>
+
+    <button className="link-button" type="button" onClick={()=>setShowLegacy(v=>!v)}>{showLegacy?'Hide email login':'Use legacy email login'}</button>
+
+    {showLegacy&&<form className="legacy-auth">
       <div className="field"><label>Email</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} required /></div>
       <div className="field"><label>Password</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} minLength={8} required /></div>
       {message && <p className="status">{message}</p>}
@@ -36,6 +47,6 @@ export default function AuthPage() {
         <button type="submit" disabled={busy} className="btn primary" onClick={e=>submit(e,'login')}>Sign in</button>
         <button type="button" disabled={busy} className="btn" onClick={e=>submit(e,'signup')}>Create account</button>
       </div>
-    </form>
+    </form>}
   </main>
 }
