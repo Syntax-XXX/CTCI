@@ -6,8 +6,8 @@ import { getValidTwitchUserToken, sendTwitchChatMessage } from '@/lib/twitch'
 export const runtime='nodejs'
 export const dynamic='force-dynamic'
 
-const ADMINISTRATOR=1n<<3n
-const MANAGE_GUILD=1n<<5n
+const ADMINISTRATOR=8
+const MANAGE_GUILD=32
 const EPHEMERAL=1<<6
 
 export async function POST(request:NextRequest){
@@ -34,9 +34,7 @@ export async function POST(request:NextRequest){
     if(connectionError)throw connectionError
     if(!connection)return interactionReply('This Discord server is not connected to a CTCI streamer account.',true)
 
-    let permissions=0n
-    try{permissions=BigInt(permissionText)}catch{}
-    const allowed=discordUserId===String(connection.installed_by_discord_user_id||'')||(permissions&ADMINISTRATOR)!==0n||(permissions&MANAGE_GUILD)!==0n
+    const allowed=discordUserId===String(connection.installed_by_discord_user_id||'')||hasDiscordPermission(permissionText,ADMINISTRATOR)||hasDiscordPermission(permissionText,MANAGE_GUILD)
     if(!allowed)return interactionReply('You need Manage Server permission to send messages to Twitch through CTCI.',true)
 
     const{data:profile,error:profileError}=await admin.from('profiles').select('twitch_user_id,twitch_login').eq('id',connection.owner_id).maybeSingle()
@@ -54,6 +52,13 @@ export async function POST(request:NextRequest){
     console.error('Discord /twitch interaction failed',error)
     return interactionReply('CTCI could not send that message to Twitch. Check the streamer connection and try again.',true)
   }
+}
+
+function hasDiscordPermission(decimal:string,flag:number){
+  if(!/^\d+$/.test(decimal))return false
+  let low6=0
+  for(const char of decimal)low6=(low6*10+Number(char))%64
+  return(low6&flag)===flag
 }
 
 function interactionReply(message:string,ephemeral=false){
