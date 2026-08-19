@@ -1,0 +1,104 @@
+const TWITCH_ID_BASE = 'https://id.twitch.tv/oauth2'
+const TWITCH_API_BASE = 'https://api.twitch.tv/helix'
+
+export const TWITCH_SCOPES = ['user:read:chat', 'user:bot', 'channel:bot']
+export const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://chromachat.syntax-xxx.is-a.dev').replace(/\/$/, '')
+export const TWITCH_REDIRECT_URI = `${APP_URL}/api/auth/callback`
+export const TWITCH_EVENTSUB_CALLBACK = `${APP_URL}/api/twitch/eventsub`
+
+export function getTwitchClientId() {
+  const value = process.env.TWITCH_CLIENT_ID
+  if (!value) throw new Error('TWITCH_CLIENT_ID is not configured')
+  return value
+}
+
+export function getTwitchClientSecret() {
+  const value = process.env.TWITCH_CLIENT_SECRET
+  if (!value) throw new Error('TWITCH_CLIENT_SECRET is not configured')
+  return value
+}
+
+export function getEventSubSecret() {
+  const value = process.env.TWITCH_EVENTSUB_SECRET
+  if (!value || value.length < 10 || value.length > 100) {
+    throw new Error('TWITCH_EVENTSUB_SECRET must be 10-100 ASCII characters')
+  }
+  return value
+}
+
+export async function exchangeCodeForTokens(code: string) {
+  const body = new URLSearchParams({
+    client_id: getTwitchClientId(),
+    client_secret: getTwitchClientSecret(),
+    code,
+    grant_type: 'authorization_code',
+    redirect_uri: TWITCH_REDIRECT_URI,
+  })
+  const res = await fetch(`${TWITCH_ID_BASE}/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+    cache: 'no-store',
+  })
+  if (!res.ok) throw new Error(`Twitch token exchange failed: ${res.status} ${await res.text()}`)
+  return res.json() as Promise<{ access_token: string; refresh_token: string; expires_in: number; scope: string[]; token_type: string }>
+}
+
+export async function getTwitchUser(accessToken: string) {
+  const res = await fetch(`${TWITCH_API_BASE}/users`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Client-Id': getTwitchClientId(),
+    },
+    cache: 'no-store',
+  })
+  if (!res.ok) throw new Error(`Twitch user lookup failed: ${res.status} ${await res.text()}`)
+  const body = await res.json() as { data?: Array<{ id: string; login: string; display_name: string; profile_image_url: string }> }
+  if (!body.data?.[0]) throw new Error('Twitch returned no user for this authorization')
+  return body.data[0]
+}
+
+export async function getAppAccessToken() {
+  const body = new URLSearchParams({
+    client_id: getTwitchClientId(),
+    client_secret: getTwitchClientSecret(),
+    grant_type: 'client_credentials',
+  })
+  const res = await fetch(`${TWITCH_ID_BASE}/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+    cache: 'no-store',
+  })
+  if (!res.ok) throw new Error(`Twitch app token request failed: ${res.status} ${await res.text()}`)
+  return (await res.json() as { access_token: string }).access_token
+}
+
+export async function createChatSubscription(broadcasterUserId: string) {
+  const appToken = await getAppAccessToken()
+  const res = await fetch(`${TWITCH_API_BASE}/eventsub/subscriptions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${appToken}`,
+      'Client-Id': getTwitchClientId(),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      type: 'channel.chat.message',
+      version: '1',
+      condition: {
+        broadcaster_user_id: broadcasterUserId,
+        user_id: broadcasterUserId,
+      },
+      transport: {
+        method: 'webhook',
+        callback: TWITCH_EVENTSUB_CALLBACK,
+        secret: getEventSubSecret(),
+      },
+    }),
+    cache: 'no-store',
+  })
+  const text = await res.text()
+  if (!res.ok && res.status !== 409) throw new Error(`EventSub subscription failed: ${res.status} ${text}`)
+  return text ? JSON.parse(text) : null
+}
