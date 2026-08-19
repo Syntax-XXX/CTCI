@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
+import { PluginDashboardSurface } from '@/components/PluginSurface'
 
 type DashboardNavProps = {
   onSignOut?: () => void | Promise<void>
@@ -18,6 +19,7 @@ const items = [
 export default function DashboardNav({ onSignOut }: DashboardNavProps) {
   const pathname = usePathname()
   const [syncing,setSyncing]=useState(false)
+  const extensionPlacement=pathname==='/dashboard'?'overview':pathname.startsWith('/dashboard/badges')?'badges':null
 
   async function syncDiscord(){
     setSyncing(true)
@@ -33,7 +35,7 @@ export default function DashboardNav({ onSignOut }: DashboardNavProps) {
     }finally{setSyncing(false)}
   }
 
-  return (
+  return <>
     <header className="app-header">
       <div className="app-header-inner">
         <Link href="/dashboard" className="brand brand-link" aria-label="CTCI dashboard">
@@ -56,5 +58,6 @@ export default function DashboardNav({ onSignOut }: DashboardNavProps) {
         </div>
       </div>
     </header>
-  )
+    {extensionPlacement?<div className="app-main" style={{paddingBottom:0}}><PluginDashboardSurface placement={extensionPlacement}/></div>:null}
+  </>
 }
