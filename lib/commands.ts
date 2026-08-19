@@ -4,61 +4,36 @@ export type CommandPermission = 'broadcaster' | 'moderator' | 'vip' | 'subscribe
 export type ParsedCommand = { prefix:string; command:string; args:string[]; rawArgs:string; raw:string }
 export type CommandActor = { twitchUserId:string; login:string; roles:Set<CommandPermission> }
 export type CommandContext = { admin:SupabaseClient; ownerId:string; channelTwitchUserId:string; actor:CommandActor; parsed:ParsedCommand }
-export type ChatCommand = {
-  name:string; aliases?:string[]; description:string; source:'core'|'plugin'; pluginId?:string;
-  permissions:CommandPermission[]; cooldown?:{globalSeconds?:number;userSeconds?:number};
-  handler:(ctx:CommandContext)=>Promise<{message?:string;changed?:Record<string,unknown>}>
-}
+export type ChatCommand = { name:string; aliases?:string[]; description:string; source:'core'|'plugin'; pluginId?:string; permissions:CommandPermission[]; cooldown?:{globalSeconds?:number;userSeconds?:number}; handler:(ctx:CommandContext)=>Promise<{message?:string;changed?:Record<string,unknown>}> }
 
 const registry=new Map<string,ChatCommand>()
-
-export function registerCommand(command:ChatCommand){
-  const keys=[command.name,...(command.aliases||[])].map(v=>v.toLowerCase())
-  for(const key of keys){const existing=registry.get(key);if(existing&&existing.source==='core'&&command.source==='plugin')throw new Error(`Plugin command cannot override built-in command: ${key}`)}
-  keys.forEach(key=>registry.set(key,command))
-}
+export function registerCommand(command:ChatCommand){const keys=[command.name,...(command.aliases||[])].map(v=>v.toLowerCase());for(const key of keys){const existing=registry.get(key);if(existing&&existing.source==='core'&&command.source==='plugin')throw new Error(`Plugin command cannot override built-in command: ${key}`)}keys.forEach(key=>registry.set(key,command))}
 export function unregisterPluginCommands(pluginId:string){for(const [key,value] of registry.entries())if(value.source==='plugin'&&value.pluginId===pluginId)registry.delete(key)}
 export function listCommands(){return [...new Map([...registry.values()].map(c=>[c.name,c])).values()]}
 
-export function parseCommand(message:string,prefix:string):ParsedCommand|null{
-  if(!message.toLowerCase().startsWith(prefix.toLowerCase()))return null
-  const body=message.slice(prefix.length).trim();if(!body||body.length>500)return null
-  const tokens=tokenize(body);if(!tokens.length)return null
-  const [command,...args]=tokens;return {prefix,command:command.toLowerCase(),args,rawArgs:body.slice(command.length).trim(),raw:message}
-}
+export function parseCommand(message:string,prefix:string):ParsedCommand|null{if(!message.toLowerCase().startsWith(prefix.toLowerCase()))return null;const body=message.slice(prefix.length).trim();if(!body||body.length>500)return null;const tokens=tokenize(body);if(!tokens.length)return null;const [command,...args]=tokens;return {prefix,command:command.toLowerCase(),args,rawArgs:body.slice(command.length).trim(),raw:message}}
 function tokenize(input:string){const out:string[]=[];let current='';let quote:'"'|"'"|null=null;let escape=false;for(const ch of input){if(escape){current+=ch;escape=false;continue}if(ch==='\\'){escape=true;continue}if(quote){if(ch===quote)quote=null;else current+=ch;continue}if(ch==='"'||ch==="'"){quote=ch;continue}if(/\s/.test(ch)){if(current){out.push(current);current=''}continue}current+=ch}if(quote)throw new Error('Unclosed quoted argument');if(current)out.push(current);return out}
 
 export async function executeCommand(ctx:CommandContext){
-  const command=registry.get(ctx.parsed.command);if(!command)return {handled:false as const}
-  const {data:config}=await ctx.admin.from('command_configurations').select('*').eq('owner_id',ctx.ownerId).eq('command_name',command.name).maybeSingle()
+  let command=registry.get(ctx.parsed.command)
+  let config:any=null
+  if(command){
+    const res=await ctx.admin.from('command_configurations').select('*').eq('owner_id',ctx.ownerId).eq('command_name',command.name).maybeSingle();config=res.data
+  }else{
+    const res=await ctx.admin.from('command_configurations').select('*').eq('owner_id',ctx.ownerId).contains('aliases',[ctx.parsed.command]).maybeSingle();config=res.data
+    if(config)command=registry.get(String(config.command_name).toLowerCase())
+  }
+  if(!command)return {handled:false as const}
   if(config?.enabled===false)return audit(ctx,command,false,'disabled')
   const allowed=(config?.permissions?.length?config.permissions:command.permissions) as CommandPermission[]
   if(!allowed.some(role=>ctx.actor.roles.has(role)))return audit(ctx,command,false,'forbidden')
-
-  const globalSeconds=config?.global_cooldown_seconds??command.cooldown?.globalSeconds??1
-  const userSeconds=config?.user_cooldown_seconds??command.cooldown?.userSeconds??5
-  const {data:cooldownAllowed,error:cooldownError}=await ctx.admin.rpc('try_command_cooldown',{
-    p_owner_id:ctx.ownerId,p_command_name:command.name,p_twitch_user_id:ctx.actor.twitchUserId,p_global_seconds:globalSeconds,p_user_seconds:userSeconds,
-  })
-  if(cooldownError)throw cooldownError
-  if(!cooldownAllowed)return audit(ctx,command,false,'cooldown')
-
-  try{
-    const result=await command.handler(ctx)
-    if(config){
-      await ctx.admin.from('command_configurations').update({usage_count:Number(config.usage_count||0)+1,last_used_at:new Date().toISOString()}).eq('id',config.id)
-    }else{
-      await ctx.admin.from('command_configurations').insert({owner_id:ctx.ownerId,command_name:command.name,aliases:command.aliases||[],permissions:command.permissions,source:command.source,plugin_id:command.pluginId||null,usage_count:1,last_used_at:new Date().toISOString()})
-    }
-    await audit(ctx,command,true,null)
-    return {handled:true as const,success:true,...result}
-  }catch(error){await audit(ctx,command,false,error instanceof Error?error.message.slice(0,80):'handler_error');return {handled:true as const,success:false}}
+  const globalSeconds=config?.global_cooldown_seconds??command.cooldown?.globalSeconds??1;const userSeconds=config?.user_cooldown_seconds??command.cooldown?.userSeconds??5
+  const {data:cooldownAllowed,error:cooldownError}=await ctx.admin.rpc('try_command_cooldown',{p_owner_id:ctx.ownerId,p_command_name:command.name,p_twitch_user_id:ctx.actor.twitchUserId,p_global_seconds:globalSeconds,p_user_seconds:userSeconds})
+  if(cooldownError)throw cooldownError;if(!cooldownAllowed)return audit(ctx,command,false,'cooldown')
+  try{const result=await command.handler(ctx);if(config){await ctx.admin.from('command_configurations').update({usage_count:Number(config.usage_count||0)+1,last_used_at:new Date().toISOString()}).eq('id',config.id)}else{await ctx.admin.from('command_configurations').insert({owner_id:ctx.ownerId,command_name:command.name,aliases:command.aliases||[],permissions:command.permissions,source:command.source,plugin_id:command.pluginId||null,usage_count:1,last_used_at:new Date().toISOString()})}await audit(ctx,command,true,null);return {handled:true as const,success:true,...result}}catch(error){await audit(ctx,command,false,error instanceof Error?error.message.slice(0,80):'handler_error');return {handled:true as const,success:false}}
 }
 
-async function audit(ctx:CommandContext,command:ChatCommand,success:boolean,errorCode:string|null){
-  await ctx.admin.from('command_audit_log').insert({owner_id:ctx.ownerId,channel_twitch_user_id:ctx.channelTwitchUserId,twitch_user_id:ctx.actor.twitchUserId,twitch_login:ctx.actor.login,command_name:command.name,raw_command:ctx.parsed.raw.slice(0,500),sanitized_args:ctx.parsed.args.slice(0,20),source:command.source,plugin_id:command.pluginId||null,success,error_code:errorCode})
-  return {handled:true as const,success}
-}
+async function audit(ctx:CommandContext,command:ChatCommand,success:boolean,errorCode:string|null){await ctx.admin.from('command_audit_log').insert({owner_id:ctx.ownerId,channel_twitch_user_id:ctx.channelTwitchUserId,twitch_user_id:ctx.actor.twitchUserId,twitch_login:ctx.actor.login,command_name:command.name,raw_command:ctx.parsed.raw.slice(0,500),sanitized_args:ctx.parsed.args.slice(0,20),source:command.source,plugin_id:command.pluginId||null,success,error_code:errorCode});return {handled:true as const,success}}
 function requireHexOrTransparent(value:string){if(value==='transparent')return value;if(!/^#[0-9a-f]{6}$/i.test(value))throw new Error('invalid_color');return value}
 async function updateOverlay(ctx:CommandContext,patch:Record<string,unknown>){const {error}=await ctx.admin.from('overlays').update(patch).eq('user_id',ctx.ownerId);if(error)throw error;return {changed:patch}}
 
