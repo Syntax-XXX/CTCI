@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminSupabase } from '@/lib/supabase/admin'
 import { getEventSubSecret, getValidTwitchUserToken, sendTwitchChatMessage } from '@/lib/twitch'
-import { sendDiscordChannelMessage } from '@/lib/discord'
+import { sendDiscordChatEmbed } from '@/lib/discord'
 import { executeCommand, listCommands, parseCommand, type CommandPermission } from '@/lib/commands'
 
 export const runtime = 'nodejs'
@@ -57,13 +57,13 @@ export async function POST(request: NextRequest) {
         let response:string|undefined = result.success && 'message' in result && typeof result.message==='string' ? result.message : undefined
         if (result.success && parsed.command === 'help') response = await buildHelpMessage(admin, profile.id, overlay.command_prefix || 'CC!', parsed.args[0])
         if (response) await replyInTwitch(admin, profile.id, event.broadcaster_user_id, event.message_id, response)
-        await mirrorToDiscord(admin, profile.id, event, text, true)
+        await mirrorToDiscord(admin, profile.id, event, text, true, timestamp)
         return new NextResponse(null, { status: 204 })
       }
     }
     const { error: insertError } = await admin.from('chat_events').insert({id:event.message_id,overlay_id:overlay.id,broadcaster_user_id:event.broadcaster_user_id,broadcaster_login:String(event.broadcaster_user_login||'').toLowerCase(),chatter_user_id:event.chatter_user_id,chatter_login:String(event.chatter_user_login||'').toLowerCase(),chatter_name:event.chatter_user_name||event.chatter_user_login||'unknown',message_text:text,color:event.color||null,badges:event.badges||[],fragments:event.message?.fragments||[],reply:event.reply||null,created_at:timestamp})
     if (insertError && insertError.code !== '23505') throw insertError
-    if (!insertError) await mirrorToDiscord(admin, profile.id, event, text, false)
+    if (!insertError) await mirrorToDiscord(admin, profile.id, event, text, false, timestamp)
     return new NextResponse(null, { status: 204 })
   } catch (error) {
     if (claimed) {
@@ -85,7 +85,6 @@ async function replyInTwitch(admin:any,ownerId:string,broadcasterId:string,paren
   }catch(error){console.error('Twitch command reply failed',error)}
 }
 async function buildHelpMessage(admin:any,ownerId:string,prefix:string,arg?:string){const commands=listCommands();const{data:rows}=await admin.from('command_configurations').select('command_name,enabled,aliases,permissions').eq('owner_id',ownerId);const configs=new Map<string,any>((rows||[]).map((r:any)=>[String(r.command_name).toLowerCase(),r]));const active=commands.filter(c=>configs.get(c.name)?.enabled!==false),q=(arg||'').toLowerCase();if(q&&!/^\d+$/.test(q)){const found=active.find(c=>c.name===q||c.aliases?.includes(q)||(configs.get(c.name)?.aliases||[]).includes(q));if(!found)return`Unknown command. Try ${prefix}help`;const cfg=configs.get(found.name),roles=(cfg?.permissions?.length?cfg.permissions:found.permissions).join(', '),aliases=[...(found.aliases||[]),...(cfg?.aliases||[])].filter((v,i,a)=>a.indexOf(v)===i);return`${prefix}${found.name} — ${found.description} · roles: ${roles}${aliases.length?` · aliases: ${aliases.join(', ')}`:''}`.slice(0,500)}const perPage=10,total=Math.max(1,Math.ceil(active.length/perPage)),page=Math.min(total,Math.max(1,Number(q||1)||1)),slice=active.slice((page-1)*perPage,page*perPage);return`Commands ${page}/${total}: ${slice.map(c=>prefix+c.name).join(', ')}${page<total?` · ${prefix}help ${page+1}`:''}`.slice(0,500)}
-async function mirrorToDiscord(admin:any,ownerId:string,event:any,text:string,isCommand:boolean){try{const{data:sync}=await admin.from('discord_chat_sync').select('channel_id,enabled,include_commands').eq('owner_id',ownerId).maybeSingle();if(!sync?.enabled||!sync.channel_id||(isCommand&&!sync.include_commands))return;const name=escapeDiscord(String(event.chatter_user_name||event.chatter_user_login||'unknown')),message=escapeDiscord(text).slice(0,1800);await sendDiscordChannelMessage(sync.channel_id,`🟣 **${name}**: ${message}`)}catch(error){console.error('Discord chat mirror failed',error)}}
-function escapeDiscord(value:string){return value.replace(/([\\`*_{}\[\]()#+\-.!|>~])/g,'\\$1').replace(/@/g,'＠')}
+async function mirrorToDiscord(admin:any,ownerId:string,event:any,text:string,isCommand:boolean,timestamp:string){try{const{data:sync}=await admin.from('discord_chat_sync').select('channel_id,enabled,include_commands').eq('owner_id',ownerId).maybeSingle();if(!sync?.enabled||!sync.channel_id||(isCommand&&!sync.include_commands))return;await sendDiscordChatEmbed({channelId:sync.channel_id,chatterName:String(event.chatter_user_name||event.chatter_user_login||'unknown'),chatterLogin:String(event.chatter_user_login||'unknown'),message:text,broadcasterLogin:String(event.broadcaster_user_login||''),isCommand,timestamp,color:typeof event.color==='string'?event.color:null})}catch(error){console.error('Discord chat mirror failed',error)}}
 function getRoles(event:any){const roles=new Set<CommandPermission>(['viewer']);if(event.chatter_user_id===event.broadcaster_user_id)roles.add('broadcaster');for(const badge of Array.isArray(event.badges)?event.badges:[]){const id=String(badge?.set_id||badge?.id||'').toLowerCase();if(id==='moderator')roles.add('moderator');if(id==='vip')roles.add('vip');if(id==='subscriber'||id==='founder')roles.add('subscriber')}return roles}
 function verifySignature(secret:string,id:string,timestamp:string,body:string,provided:string){const expected=`sha256=${createHmac('sha256',secret).update(id+timestamp+body).digest('hex')}`,a=Buffer.from(expected),b=Buffer.from(provided);return a.length===b.length&&timingSafeEqual(a,b)}
