@@ -6,22 +6,14 @@ import { inspectPluginZip } from '@/lib/plugins'
 
 export const runtime='nodejs'
 
-// Marketplace publishing is intentionally owner-only.
-// This is the immutable CTCI auth/profile UUID for dc_syntax_xxx.
 const MARKETPLACE_OWNER_USER_ID='a1c392cc-b897-4b67-838e-1e537d8a03a7'
 
 async function requireMarketplaceOwner(){
   const sb=await createServerSupabase()
   const{data:{user}}=await sb.auth.getUser()
   if(!user||user.id!==MARKETPLACE_OWNER_USER_ID)return null
-
   const admin=createAdminSupabase()
-  const{data:profile,error}=await admin
-    .from('profiles')
-    .select('id,twitch_login')
-    .eq('id',user.id)
-    .maybeSingle()
-
+  const{data:profile,error}=await admin.from('profiles').select('id,twitch_login').eq('id',user.id).maybeSingle()
   if(error||!profile||String(profile.twitch_login||'').toLowerCase()!=='dc_syntax_xxx')return null
   return{user,admin}
 }
@@ -44,7 +36,7 @@ export async function POST(request:NextRequest){
     const now=new Date().toISOString()
     const plugin=await auth.admin.from('plugins').upsert({id:m.id,name:m.name,author:m.author,description:m.description||'',api_version:m.apiVersion,latest_version:m.version,marketplace_status:'published',category,tags,featured,verified:true,published_at:now,updated_at:now},{onConflict:'id'}).select('*').single()
     if(plugin.error)throw plugin.error
-    const version=await auth.admin.from('plugin_versions').upsert({plugin_id:m.id,version:m.version,manifest:m,bundle_path:path,checksum_sha256:checksum},{onConflict:'plugin_id,version'}).select('id').single()
+    const version=await auth.admin.from('plugin_versions').upsert({plugin_id:m.id,version:m.version,manifest:m,bundle_path:path,checksum_sha256:checksum,marketplace_published:true,marketplace_published_at:now},{onConflict:'plugin_id,version'}).select('id').single()
     if(version.error)throw version.error
     return NextResponse.json({ok:true,plugin:plugin.data,manifest:m,checksum,fileCount:inspection.fileCount,uncompressedBytes:inspection.uncompressedBytes})
   }catch(error){return NextResponse.json({error:error instanceof Error?error.message:'Marketplace publish failed'},{status:400})}
