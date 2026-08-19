@@ -1,13 +1,8 @@
 import { randomBytes } from 'crypto'
 import { NextResponse } from 'next/server'
-import { createServerSupabase } from '@/lib/supabase/server'
 import { getTwitchClientId, TWITCH_REDIRECT_URI, TWITCH_SCOPES } from '@/lib/twitch'
 
 export async function GET() {
-  const supabase = await createServerSupabase()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.redirect(new URL('/auth', TWITCH_REDIRECT_URI))
-
   let clientId: string
   try {
     clientId = getTwitchClientId()
