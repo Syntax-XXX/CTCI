@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminSupabase } from '@/lib/supabase/admin'
-import { getEventSubSecret, sendTwitchChatMessage } from '@/lib/twitch'
+import { getEventSubSecret, getValidTwitchUserToken, sendTwitchChatMessage } from '@/lib/twitch'
 import { sendDiscordChannelMessage } from '@/lib/discord'
 import { executeCommand, listCommands, parseCommand, type CommandPermission } from '@/lib/commands'
 
@@ -25,8 +25,20 @@ export async function POST(request: NextRequest) {
   if (messageType !== 'notification' || payload.subscription?.type !== 'channel.chat.message') return new NextResponse(null, { status: 204 })
   const event = payload.event
   if (!event?.message_id || !event?.broadcaster_user_id || !event?.chatter_user_id) return NextResponse.json({ error: 'Malformed chat event' }, { status: 400 })
+
+  const admin = createAdminSupabase()
+  let claimed = false
   try {
-    const admin = createAdminSupabase()
+    const claim = await admin.from('eventsub_receipts').insert({message_id:messageId})
+    if (claim.error?.code === '23505') return new NextResponse(null, { status: 204 })
+    if (claim.error) throw claim.error
+    claimed = true
+    if (Math.random() < 0.01) {
+      const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()
+      const cleanup = await admin.from('eventsub_receipts').delete().lt('received_at', cutoff)
+      if (cleanup.error) console.warn('EventSub receipt cleanup failed', cleanup.error)
+    }
+
     const { data: profile, error: profileError } = await admin.from('profiles').select('id').eq('twitch_user_id', event.broadcaster_user_id).maybeSingle()
     if (profileError) throw profileError
     if (!profile) return new NextResponse(null, { status: 204 })
@@ -53,10 +65,25 @@ export async function POST(request: NextRequest) {
     if (insertError && insertError.code !== '23505') throw insertError
     if (!insertError) await mirrorToDiscord(admin, profile.id, event, text, false)
     return new NextResponse(null, { status: 204 })
-  } catch (error) { console.error('EventSub chat ingestion failed', error); return NextResponse.json({ error: 'Failed to ingest event' }, { status: 500 }) }
+  } catch (error) {
+    if (claimed) {
+      const release = await admin.from('eventsub_receipts').delete().eq('message_id', messageId)
+      if (release.error) console.error('Failed to release EventSub receipt after error', release.error)
+    }
+    console.error('EventSub chat ingestion failed', error)
+    return NextResponse.json({ error: 'Failed to ingest event' }, { status: 500 })
+  }
 }
 
-async function replyInTwitch(admin:any,ownerId:string,broadcasterId:string,parentMessageId:string,message:string){try{const{data:creds}=await admin.from('twitch_credentials').select('access_token,scopes').eq('user_id',ownerId).maybeSingle();if(!creds?.access_token)return;const scopes=Array.isArray(creds.scopes)?creds.scopes:[];if(!scopes.includes('user:write:chat')){console.warn('Twitch command reply skipped: reconnect Twitch to grant user:write:chat');return}await sendTwitchChatMessage({accessToken:creds.access_token,broadcasterId,senderId:broadcasterId,message,replyParentMessageId:parentMessageId})}catch(error){console.error('Twitch command reply failed',error)}}
+async function replyInTwitch(admin:any,ownerId:string,broadcasterId:string,parentMessageId:string,message:string){
+  try{
+    const creds=await getValidTwitchUserToken(admin,ownerId)
+    if(!creds?.access_token)return
+    const scopes=Array.isArray(creds.scopes)?creds.scopes:[]
+    if(!scopes.includes('user:write:chat')){console.warn('Twitch command reply skipped: reconnect Twitch to grant user:write:chat');return}
+    await sendTwitchChatMessage({accessToken:creds.access_token,broadcasterId,senderId:broadcasterId,message,replyParentMessageId:parentMessageId})
+  }catch(error){console.error('Twitch command reply failed',error)}
+}
 async function buildHelpMessage(admin:any,ownerId:string,prefix:string,arg?:string){const commands=listCommands();const{data:rows}=await admin.from('command_configurations').select('command_name,enabled,aliases,permissions').eq('owner_id',ownerId);const configs=new Map<string,any>((rows||[]).map((r:any)=>[String(r.command_name).toLowerCase(),r]));const active=commands.filter(c=>configs.get(c.name)?.enabled!==false),q=(arg||'').toLowerCase();if(q&&!/^\d+$/.test(q)){const found=active.find(c=>c.name===q||c.aliases?.includes(q)||(configs.get(c.name)?.aliases||[]).includes(q));if(!found)return`Unknown command. Try ${prefix}help`;const cfg=configs.get(found.name),roles=(cfg?.permissions?.length?cfg.permissions:found.permissions).join(', '),aliases=[...(found.aliases||[]),...(cfg?.aliases||[])].filter((v,i,a)=>a.indexOf(v)===i);return`${prefix}${found.name} — ${found.description} · roles: ${roles}${aliases.length?` · aliases: ${aliases.join(', ')}`:''}`.slice(0,500)}const perPage=10,total=Math.max(1,Math.ceil(active.length/perPage)),page=Math.min(total,Math.max(1,Number(q||1)||1)),slice=active.slice((page-1)*perPage,page*perPage);return`Commands ${page}/${total}: ${slice.map(c=>prefix+c.name).join(', ')}${page<total?` · ${prefix}help ${page+1}`:''}`.slice(0,500)}
 async function mirrorToDiscord(admin:any,ownerId:string,event:any,text:string,isCommand:boolean){try{const{data:sync}=await admin.from('discord_chat_sync').select('channel_id,enabled,include_commands').eq('owner_id',ownerId).maybeSingle();if(!sync?.enabled||!sync.channel_id||(isCommand&&!sync.include_commands))return;const name=escapeDiscord(String(event.chatter_user_name||event.chatter_user_login||'unknown')),message=escapeDiscord(text).slice(0,1800);await sendDiscordChannelMessage(sync.channel_id,`🟣 **${name}**: ${message}`)}catch(error){console.error('Discord chat mirror failed',error)}}
 function escapeDiscord(value:string){return value.replace(/([\\`*_{}\[\]()#+\-.!|>~])/g,'\\$1').replace(/@/g,'＠')}
