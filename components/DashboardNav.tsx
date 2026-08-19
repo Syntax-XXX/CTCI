@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useState } from 'react'
 
 type DashboardNavProps = {
   onSignOut?: () => void | Promise<void>
@@ -16,6 +17,22 @@ const items = [
 
 export default function DashboardNav({ onSignOut }: DashboardNavProps) {
   const pathname = usePathname()
+  const [syncing,setSyncing]=useState(false)
+
+  async function syncDiscord(){
+    setSyncing(true)
+    try{
+      const res=await fetch('/api/discord/sync',{method:'POST'})
+      const body=await res.json()
+      if(!res.ok){window.alert(body.error||'Discord bot sync failed');return}
+      const badgeRes=await fetch('/api/badges/discord-sync',{method:'POST'})
+      const badgeBody=await badgeRes.json().catch(()=>({}))
+      const badgeText=badgeRes.ok?` · badges +${badgeBody.granted||0}/-${badgeBody.removed||0}`:''
+      window.alert(`Discord synced: ${body.guild?.name||'server'} · ${body.roles} roles · ${body.channels} channels${badgeText}`)
+      window.location.reload()
+    }finally{setSyncing(false)}
+  }
+
   return (
     <header className="app-header">
       <div className="app-header-inner">
@@ -33,7 +50,8 @@ export default function DashboardNav({ onSignOut }: DashboardNavProps) {
           })}
         </nav>
         <div className="app-header-actions">
-          <a className="btn compact" href="/dashboard/badges#discord">Discord setup</a>
+          <a className="btn compact" href="/api/discord/connect">Install / change Discord</a>
+          <button className="btn compact primary" type="button" disabled={syncing} onClick={syncDiscord}>{syncing?'Syncing…':'Sync Discord Bot'}</button>
           {onSignOut ? <button className="btn compact ghost" onClick={onSignOut}>Sign out</button> : null}
         </div>
       </div>
