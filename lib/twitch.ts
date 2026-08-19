@@ -31,6 +31,27 @@ export async function exchangeCodeForTokens(code: string) {
   return res.json() as Promise<{ access_token:string; refresh_token:string; expires_in:number; scope:string[]; token_type:string }>
 }
 
+export async function refreshTwitchUserTokens(refreshToken:string) {
+  const body = new URLSearchParams({client_id:getTwitchClientId(),client_secret:getTwitchClientSecret(),grant_type:'refresh_token',refresh_token:refreshToken})
+  const res = await fetch(`${TWITCH_ID_BASE}/token`, {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body,cache:'no-store'})
+  if (!res.ok) throw new Error(`Twitch token refresh failed: ${res.status} ${await res.text()}`)
+  return res.json() as Promise<{ access_token:string; refresh_token:string; expires_in:number; scope:string[]; token_type:string }>
+}
+
+export async function getValidTwitchUserToken(admin:any,userId:string) {
+  const {data:creds,error}=await admin.from('twitch_credentials').select('access_token,refresh_token,expires_at,scopes').eq('user_id',userId).maybeSingle()
+  if(error)throw error
+  if(!creds?.access_token)return null
+  const expiresAt=Date.parse(String(creds.expires_at||''))
+  if(Number.isFinite(expiresAt)&&expiresAt-Date.now()>5*60*1000)return creds
+  if(!creds.refresh_token)throw new Error('Twitch credentials expired and no refresh token is available')
+  const refreshed=await refreshTwitchUserTokens(creds.refresh_token)
+  const next={access_token:refreshed.access_token,refresh_token:refreshed.refresh_token||creds.refresh_token,expires_at:new Date(Date.now()+refreshed.expires_in*1000).toISOString(),scopes:refreshed.scope}
+  const {error:updateError}=await admin.from('twitch_credentials').update(next).eq('user_id',userId)
+  if(updateError)throw updateError
+  return next
+}
+
 export async function getTwitchUser(accessToken: string) {
   const res = await fetch(`${TWITCH_API_BASE}/users`, {headers:{Authorization:`Bearer ${accessToken}`,'Client-Id':getTwitchClientId()},cache:'no-store'})
   if (!res.ok) throw new Error(`Twitch user lookup failed: ${res.status} ${await res.text()}`)
