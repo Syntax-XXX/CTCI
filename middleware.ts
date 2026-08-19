@@ -18,10 +18,17 @@ export async function middleware(request: NextRequest) {
       },
     },
   })
-  await supabase.auth.getUser()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    const target = new URL('/auth', request.url)
+    target.searchParams.set('next', request.nextUrl.pathname)
+    return NextResponse.redirect(target)
+  }
+
   return response
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/api/auth/:path*', '/api/twitch/:path*'],
+  matcher: ['/dashboard/:path*'],
 }
