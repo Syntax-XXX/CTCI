@@ -14,19 +14,36 @@ export async function POST(request:NextRequest){
   try{
     const bytes=new Uint8Array(await file.arrayBuffer()),inspection=inspectPluginZip(bytes),m=inspection.manifest,admin=createAdminSupabase()
     const checksum=createHash('sha256').update(bytes).digest('hex'),path=`${user.id}/${m.id}/${m.version}-${checksum.slice(0,12)}.zip`
-    const upload=await admin.storage.from('ctci-plugins').upload(path,bytes,{contentType:'application/zip',upsert:false});if(upload.error&&upload.error.message!=='The resource already exists')throw upload.error
-    const existingPlugin=await admin.from('plugins').select('id').eq('id',m.id).maybeSingle()
+
+    const existingPlugin=await admin.from('plugins').select('id,created_by,marketplace_status').eq('id',m.id).maybeSingle()
     if(existingPlugin.error)throw existingPlugin.error
-    if(existingPlugin.data)await admin.from('plugins').update({name:m.name,author:m.author,description:m.description||'',api_version:m.apiVersion,latest_version:m.version,updated_at:new Date().toISOString()}).eq('id',m.id)
-    else{const r=await admin.from('plugins').insert({id:m.id,name:m.name,author:m.author,description:m.description||'',api_version:m.apiVersion,latest_version:m.version});if(r.error)throw r.error}
-    const existingVersion=await admin.from('plugin_versions').select('id').eq('plugin_id',m.id).eq('version',m.version).maybeSingle();if(existingVersion.error)throw existingVersion.error
-    if(existingVersion.data){const r=await admin.from('plugin_versions').update({manifest:m,bundle_path:path,checksum_sha256:checksum}).eq('id',existingVersion.data.id);if(r.error)throw r.error}else{const r=await admin.from('plugin_versions').insert({plugin_id:m.id,version:m.version,manifest:m,bundle_path:path,checksum_sha256:checksum});if(r.error)throw r.error}
+    if(existingPlugin.data?.marketplace_status==='published')return NextResponse.json({error:'This plugin ID is published in the Marketplace and cannot be overwritten by a private upload'},{status:409})
+    if(existingPlugin.data?.created_by&&existingPlugin.data.created_by!==user.id)return NextResponse.json({error:'This private plugin ID is owned by another developer account'},{status:409})
+
+    const existingVersion=await admin.from('plugin_versions').select('id,marketplace_published').eq('plugin_id',m.id).eq('version',m.version).maybeSingle()
+    if(existingVersion.error)throw existingVersion.error
+    if(existingVersion.data?.marketplace_published)return NextResponse.json({error:'This plugin version is Marketplace-approved and immutable'},{status:409})
+
+    const upload=await admin.storage.from('ctci-plugins').upload(path,bytes,{contentType:'application/zip',upsert:false});if(upload.error&&!upload.error.message.toLowerCase().includes('already exists'))throw upload.error
+
+    if(existingPlugin.data){
+      const r=await admin.from('plugins').update({name:m.name,author:m.author,description:m.description||'',api_version:m.apiVersion,latest_version:m.version,created_by:user.id,updated_at:new Date().toISOString()}).eq('id',m.id).eq('created_by',user.id)
+      if(r.error)throw r.error
+    }else{
+      const r=await admin.from('plugins').insert({id:m.id,name:m.name,author:m.author,description:m.description||'',api_version:m.apiVersion,latest_version:m.version,created_by:user.id,marketplace_status:'private'})
+      if(r.error)throw r.error
+    }
+
+    if(existingVersion.data){const r=await admin.from('plugin_versions').update({manifest:m,bundle_path:path,checksum_sha256:checksum}).eq('id',existingVersion.data.id).eq('marketplace_published',false);if(r.error)throw r.error}
+    else{const r=await admin.from('plugin_versions').insert({plugin_id:m.id,version:m.version,manifest:m,bundle_path:path,checksum_sha256:checksum,marketplace_published:false});if(r.error)throw r.error}
+
     const existingInstall=await admin.from('plugin_installations').select('id').eq('owner_id',user.id).eq('plugin_id',m.id).maybeSingle();if(existingInstall.error)throw existingInstall.error
     let installationId:string
-    if(existingInstall.data){installationId=existingInstall.data.id;const r=await admin.from('plugin_installations').update({version:m.version,enabled:false,source:'uploaded',updated_at:new Date().toISOString()}).eq('id',installationId);if(r.error)throw r.error}else{const r=await admin.from('plugin_installations').insert({owner_id:user.id,plugin_id:m.id,version:m.version,enabled:false,source:'uploaded'}).select('id').single();if(r.error)throw r.error;installationId=r.data.id}
+    if(existingInstall.data){installationId=existingInstall.data.id;const r=await admin.from('plugin_installations').update({version:m.version,enabled:false,source:'uploaded',updated_at:new Date().toISOString()}).eq('id',installationId).eq('owner_id',user.id);if(r.error)throw r.error}
+    else{const r=await admin.from('plugin_installations').insert({owner_id:user.id,plugin_id:m.id,version:m.version,enabled:false,source:'uploaded'}).select('id').single();if(r.error)throw r.error;installationId=r.data.id}
     await admin.from('plugin_permission_grants').delete().eq('installation_id',installationId)
     if(m.permissions.length){const r=await admin.from('plugin_permission_grants').insert(m.permissions.map(permission=>({installation_id:installationId,permission,granted:true})));if(r.error)throw r.error}
-    const config=await admin.from('plugin_configurations').select('installation_id').eq('installation_id',installationId).maybeSingle();if(!config.data)await admin.from('plugin_configurations').insert({installation_id:installationId,config:{}})
+    const config=await admin.from('plugin_configurations').select('installation_id').eq('installation_id',installationId).maybeSingle();if(!config.data){const c=await admin.from('plugin_configurations').insert({installation_id:installationId,config:{}});if(c.error)throw c.error}
     return NextResponse.json({ok:true,installationId,manifest:m,enabled:false,checksum})
   }catch(error){return NextResponse.json({error:error instanceof Error?error.message:'Plugin install failed'},{status:400})}
 }
