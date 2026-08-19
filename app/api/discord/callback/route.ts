@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabase } from '@/lib/supabase/server'
 import { createAdminSupabase } from '@/lib/supabase/admin'
-import { APP_URL, botGuild, discordMe, discordUserGuilds, exchangeDiscordCode } from '@/lib/discord'
+import { APP_URL, botGuild, discordMe, discordUserGuilds, exchangeDiscordCode, registerDiscordGuildCommands } from '@/lib/discord'
 
 const ADMINISTRATOR = 1n << 3n
 const MANAGE_GUILD = 1n << 5n
@@ -30,6 +30,7 @@ export async function GET(req:NextRequest){
     if(!selected.owner&&(permissions&ADMINISTRATOR)===0n&&(permissions&MANAGE_GUILD)===0n)throw new Error('Manage Server permission is required to connect this Discord server')
 
     const guild=await botGuild(guildId)
+    await registerDiscordGuildCommands(guildId)
     const admin=createAdminSupabase()
     const{error}=await admin.from('discord_guild_connections').upsert({owner_id:user.id,guild_id:guildId,guild_name:guild.name,guild_icon:guild.icon||null,installed_by_discord_user_id:String(discordUser.id),last_verified_at:new Date().toISOString()},{onConflict:'owner_id'})
     if(error)throw error
