@@ -10,7 +10,7 @@ export async function GET(request:NextRequest){
   const slug=String(request.nextUrl.searchParams.get('slug')||'').trim()
   if(!/^[a-zA-Z0-9_-]{1,120}$/.test(slug))return NextResponse.json({error:'Invalid overlay slug'},{status:400})
   const key=process.env.YOUTUBE_API_KEY
-  if(!key)return NextResponse.json({error:'YouTube integration is not configured'},{status:503})
+  if(!key)return NextResponse.json({error:'YouTube integration is not configured',nextPollMs:15000},{status:503})
   const admin=createAdminSupabase()
   try{
     const{data:overlay,error}=await admin.from('overlays').select('id,user_id,enabled,show_youtube_chat,youtube_video_id,youtube_live_chat_id,youtube_next_page_token,youtube_next_poll_at').eq('slug',slug).maybeSingle()
@@ -41,7 +41,7 @@ export async function GET(request:NextRequest){
       const author=item?.authorDetails||{}
       const publishedAt=String(item?.snippet?.publishedAt||new Date().toISOString())
       if(!text||!item?.id)return[]
-      return[{id:`youtube:${item.id}`,overlay_id:overlay.id,broadcaster_user_id:`youtube:${videoId}`,broadcaster_login:`youtube:${videoId}`,chatter_user_id:String(author.channelId||`youtube:${item.id}`),chatter_login:String(author.channelId||author.displayName||'youtube').toLowerCase(),chatter_name:String(author.displayName||'YouTube'),message_text:text,color:null,badges:youtubeBadges(author),fragments:[],reply:null,source:'youtube',created_at:publishedAt}]
+      return[{id:`youtube:${item.id}`,overlay_id:overlay.id,broadcaster_user_id:`youtube:${videoId}`,broadcaster_login:`youtube:${videoId}`,chatter_user_id:String(author.channelId||`youtube:${item.id}`),chatter_login:String(author.channelId||author.displayName||'youtube').toLowerCase(),chatter_name:`🔴▶ ${String(author.displayName||'YouTube')}`,message_text:text,color:null,badges:youtubeBadges(author),fragments:[],reply:null,source:'youtube',created_at:publishedAt}]
     })
     if(rows.length){
       const{error:insertError}=await admin.from('chat_events').upsert(rows,{onConflict:'id',ignoreDuplicates:true})
