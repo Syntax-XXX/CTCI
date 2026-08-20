@@ -11,6 +11,7 @@ type DashboardNavProps = {
 
 const items = [
   { href: '/dashboard', label: 'Overlay', icon: '◫' },
+  { href: '/dashboard/chat', label: 'Chat Sources', icon: '◉' },
   { href: '/dashboard/commands', label: 'Commands', icon: '⌘' },
   { href: '/dashboard/badges', label: 'Badges', icon: '◆' },
   { href: '/dashboard/plugins', label: 'Plugins', icon: '◈' },
