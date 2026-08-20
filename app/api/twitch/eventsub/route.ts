@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
     const { data: profile, error: profileError } = await admin.from('profiles').select('id').eq('twitch_user_id', event.broadcaster_user_id).maybeSingle()
     if (profileError) throw profileError
     if (!profile) return new NextResponse(null, { status: 204 })
-    const { data: overlay, error: overlayError } = await admin.from('overlays').select('id,enabled,command_prefix').eq('user_id', profile.id).maybeSingle()
+    const { data: overlay, error: overlayError } = await admin.from('overlays').select('id,enabled,command_prefix,show_twitch_chat').eq('user_id', profile.id).maybeSingle()
     if (overlayError) throw overlayError
     if (!overlay?.enabled) return new NextResponse(null, { status: 204 })
     const text = String(event.message?.text || '')
@@ -61,7 +61,8 @@ export async function POST(request: NextRequest) {
         return new NextResponse(null, { status: 204 })
       }
     }
-    const { error: insertError } = await admin.from('chat_events').insert({id:event.message_id,overlay_id:overlay.id,broadcaster_user_id:event.broadcaster_user_id,broadcaster_login:String(event.broadcaster_user_login||'').toLowerCase(),chatter_user_id:event.chatter_user_id,chatter_login:String(event.chatter_user_login||'').toLowerCase(),chatter_name:event.chatter_user_name||event.chatter_user_login||'unknown',message_text:text,color:event.color||null,badges:event.badges||[],fragments:event.message?.fragments||[],reply:event.reply||null,created_at:timestamp})
+    if(overlay.show_twitch_chat===false)return new NextResponse(null,{status:204})
+    const { error: insertError } = await admin.from('chat_events').insert({id:event.message_id,overlay_id:overlay.id,broadcaster_user_id:event.broadcaster_user_id,broadcaster_login:String(event.broadcaster_user_login||'').toLowerCase(),chatter_user_id:event.chatter_user_id,chatter_login:String(event.chatter_user_login||'').toLowerCase(),chatter_name:`🟣 ${event.chatter_user_name||event.chatter_user_login||'unknown'}`,message_text:text,color:event.color||null,badges:event.badges||[],fragments:event.message?.fragments||[],reply:event.reply||null,source:'twitch',created_at:timestamp})
     if (insertError && insertError.code !== '23505') throw insertError
     if (!insertError) await mirrorToDiscord(admin, profile.id, event, text, false, timestamp)
     return new NextResponse(null, { status: 204 })
