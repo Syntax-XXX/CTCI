@@ -11,7 +11,7 @@ export async function GET(request:NextRequest){
   const admin=createAdminSupabase()
   const primary=await admin.from('overlays').select('*').eq('slug',slug).eq('enabled',true).maybeSingle()
   if(primary.error)return NextResponse.json({error:'Overlay lookup failed'},{status:500})
-  if(primary.data)return NextResponse.json({overlay:{...primary.data,primary_overlay_id:primary.data.id,instance_id:null},instance:false},{headers:{'Cache-Control':'no-store'}})
+  if(primary.data)return NextResponse.json({overlay:{...primary.data,primary_overlay_id:primary.data.id,instance_id:null},instance:false,instanceSettings:{}},{headers:{'Cache-Control':'no-store'}})
   const instance=await admin.from('overlay_instances').select('*').eq('slug',slug).eq('enabled',true).maybeSingle()
   if(instance.error)return NextResponse.json({error:'Overlay lookup failed'},{status:500})
   if(!instance.data)return NextResponse.json({error:'Overlay not found or disabled'},{status:404})
@@ -19,5 +19,5 @@ export async function GET(request:NextRequest){
   const base=await admin.from('overlays').select('*').eq('user_id',instance.data.owner_id).eq('enabled',true).single()
   if(base.error)return NextResponse.json({error:'Base overlay unavailable'},{status:404})
   const settings=instance.data.settings&&typeof instance.data.settings==='object'?instance.data.settings:{}
-  return NextResponse.json({overlay:{...base.data,...settings,id:base.data.id,primary_overlay_id:base.data.id,slug:instance.data.slug,instance_id:instance.data.id,instance_name:instance.data.name},instance:true},{headers:{'Cache-Control':'no-store'}})
+  return NextResponse.json({overlay:{...base.data,...settings,id:base.data.id,primary_overlay_id:base.data.id,slug:instance.data.slug,instance_id:instance.data.id,instance_name:instance.data.name},instance:true,instanceSettings:settings},{headers:{'Cache-Control':'no-store'}})
 }
