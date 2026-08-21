@@ -7,6 +7,7 @@ import { executeCommand, listCommands, parseCommand, type CommandPermission } fr
 import { awardActivity,handleEngagementCommand } from '@/lib/engagement'
 import { evaluateModeration } from '@/lib/moderation'
 import { runAutomations } from '@/lib/automation'
+import { touchStreamSession } from '@/lib/sessions'
 
 export const runtime = 'nodejs'
 
@@ -48,8 +49,9 @@ export async function POST(request: NextRequest) {
     const { data: overlay, error: overlayError } = await admin.from('overlays').select('id,enabled,command_prefix,show_twitch_chat').eq('user_id', profile.id).maybeSingle()
     if (overlayError) throw overlayError
     if (!overlay?.enabled) return new NextResponse(null, { status: 204 })
-    const text = String(event.message?.text || '')
-    const actor={source:'twitch' as const,userId:String(event.chatter_user_id),login:String(event.chatter_user_login||'').toLowerCase(),displayName:String(event.chatter_user_name||event.chatter_user_login||'unknown')}
+    const text = String(event.message?.text || ''),roleSet=getRoles(event)
+    const actor={source:'twitch' as const,userId:String(event.chatter_user_id),login:String(event.chatter_user_login||'').toLowerCase(),displayName:String(event.chatter_user_name||event.chatter_user_login||'unknown'),roles:[...roleSet]}
+    try{await touchStreamSession(admin,profile.id,{source:'twitch'})}catch(error){console.error('Twitch stream session tracking failed',error)}
 
     const moderation=await evaluateModeration(admin,{ownerId:profile.id,source:'twitch',userId:actor.userId,displayName:actor.displayName,text})
     if(moderation.blocked){
@@ -71,7 +73,7 @@ export async function POST(request: NextRequest) {
       return new NextResponse(null, { status: 204 })
     }
     if (parsed) {
-      const result = await executeCommand({admin,ownerId:profile.id,channelTwitchUserId:event.broadcaster_user_id,actor:{twitchUserId:event.chatter_user_id,login:actor.login,roles:getRoles(event)},parsed})
+      const result = await executeCommand({admin,ownerId:profile.id,channelTwitchUserId:event.broadcaster_user_id,actor:{twitchUserId:event.chatter_user_id,login:actor.login,roles:roleSet},parsed})
       if (result.handled) {
         let response:string|undefined = result.success && 'message' in result && typeof result.message==='string' ? result.message : undefined
         if (result.success && parsed.command === 'help') response = await buildHelpMessage(admin, profile.id, overlay.command_prefix || 'CC!', parsed.args[0])
@@ -85,7 +87,7 @@ export async function POST(request: NextRequest) {
     try{await awardActivity(admin,profile.id,actor)}catch(error){console.error('Twitch loyalty award failed',error)}
     await runAutomations(admin,profile.id,{type:'chat_message',source:'twitch',text,userId:actor.userId,displayName:actor.displayName,eventType:'message'})
     if(overlay.show_twitch_chat===false)return new NextResponse(null,{status:204})
-    const { error: insertError } = await admin.from('chat_events').insert({id:event.message_id,overlay_id:overlay.id,broadcaster_user_id:event.broadcaster_user_id,broadcaster_login:String(event.broadcaster_user_login||'').toLowerCase(),chatter_user_id:event.chatter_user_id,chatter_login:actor.login,chatter_name:`🟣 ${actor.displayName}`,message_text:text,color:event.color||null,badges:event.badges||[],fragments:event.message?.fragments||[],reply:event.reply||null,source:'twitch',event_type:'message',event_data:moderation.flagged?{moderation:{flagged:true,reason:moderation.reason}}:{},created_at:timestamp})
+    const { error: insertError } = await admin.from('chat_events').insert({id:event.message_id,overlay_id:overlay.id,broadcaster_user_id:event.broadcaster_user_id,broadcaster_login:String(event.broadcaster_user_login||'').toLowerCase(),chatter_user_id:event.chatter_user_id,chatter_login:actor.login,chatter_name:actor.displayName,message_text:text,color:event.color||null,badges:event.badges||[],fragments:event.message?.fragments||[],reply:event.reply||null,source:'twitch',event_type:'message',event_data:moderation.flagged?{moderation:{flagged:true,reason:moderation.reason}}:{},created_at:timestamp})
     if (insertError && insertError.code !== '23505') throw insertError
     if (!insertError) await mirrorToDiscord(admin, profile.id, event, text, false, timestamp)
     return new NextResponse(null, { status: 204 })
