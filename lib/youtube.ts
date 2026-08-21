@@ -1,7 +1,7 @@
 const GOOGLE_TOKEN='https://oauth2.googleapis.com/token'
 const YOUTUBE_API='https://www.googleapis.com/youtube/v3'
 
-export const YOUTUBE_SCOPES=['https://www.googleapis.com/auth/youtube.readonly']
+export const YOUTUBE_SCOPES=['https://www.googleapis.com/auth/youtube.force-ssl']
 export const YOUTUBE_REDIRECT_URI=`${process.env.NEXT_PUBLIC_APP_URL||'https://chromachat.syntax-xxx.is-a.dev'}/api/youtube/callback`
 
 export function getYouTubeClientId(){const v=process.env.YOUTUBE_CLIENT_ID;if(!v)throw new Error('YOUTUBE_CLIENT_ID is not configured');return v}
@@ -33,8 +33,8 @@ export async function getValidYouTubeToken(admin:any,userId:string){
   const saved=await admin.from('youtube_credentials').update(update).eq('user_id',userId).select('*').single();if(saved.error)throw saved.error;return saved.data
 }
 
-async function youtube(accessToken:string,path:string){
-  const r=await fetch(`${YOUTUBE_API}${path}`,{headers:{Authorization:`Bearer ${accessToken}`,Accept:'application/json'},cache:'no-store'})
+async function youtube(accessToken:string,path:string,init?:RequestInit){
+  const r=await fetch(`${YOUTUBE_API}${path}`,{...init,headers:{Authorization:`Bearer ${accessToken}`,Accept:'application/json',...(init?.body?{'Content-Type':'application/json'}:{}),...(init?.headers||{})},cache:'no-store'})
   const j=await r.json().catch(()=>({}))
   if(!r.ok){const e:any=new Error(j?.error?.message||`YouTube API ${r.status}`);e.status=r.status;throw e}
   return j
@@ -59,4 +59,13 @@ export async function listYouTubeChat(accessToken:string,liveChatId:string,pageT
   const params=new URLSearchParams({liveChatId,part:'id,snippet,authorDetails',maxResults:'200'})
   if(pageToken)params.set('pageToken',pageToken)
   return youtube(accessToken,`/liveChat/messages?${params}`)
+}
+
+export async function sendYouTubeChatMessage(accessToken:string,liveChatId:string,message:string){
+  const body={snippet:{liveChatId,type:'textMessageEvent',textMessageDetails:{messageText:message.slice(0,200)}}}
+  return youtube(accessToken,'/liveChat/messages?part=snippet',{method:'POST',body:JSON.stringify(body)})
+}
+
+export async function deleteYouTubeChatMessage(accessToken:string,messageId:string){
+  return youtube(accessToken,`/liveChat/messages?id=${encodeURIComponent(messageId)}`,{method:'DELETE'})
 }

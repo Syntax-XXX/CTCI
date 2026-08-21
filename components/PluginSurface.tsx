@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, type CSSProperties } from 'react'
+import FeatureOverlaySurface from '@/components/FeatureOverlaySurface'
 
 type DashboardBlock=Record<string,any>
 type Setting=Record<string,any>
@@ -80,8 +81,7 @@ export function PluginOverlaySurface({slug}:{slug:string}){
   const[plugins,setPlugins]=useState<OverlayPlugin[]>([])
   useEffect(()=>{let alive=true;let timer:number|undefined;async function load(){try{const response=await fetch(`/api/plugins/ui?surface=overlay&slug=${encodeURIComponent(slug)}`,{cache:'no-store'});if(response.ok){const body=await response.json();if(alive)setPlugins(body.plugins||[])}}finally{if(alive)timer=window.setTimeout(load,15000)}}void load();return()=>{alive=false;if(timer)window.clearTimeout(timer)}},[slug])
   useEffect(()=>{let alive=true;let timer:number|undefined;async function poll(){let delay=15000;try{const response=await fetch(`/api/youtube/chat?slug=${encodeURIComponent(slug)}`,{cache:'no-store'});const body=await response.json().catch(()=>({}));if(Number.isFinite(Number(body.nextPollMs)))delay=Math.min(30000,Math.max(1000,Number(body.nextPollMs)))}catch{}finally{if(alive)timer=window.setTimeout(poll,delay)}}void poll();return()=>{alive=false;if(timer)window.clearTimeout(timer)}},[slug])
-  if(!plugins.length)return null
-  return <div className="plugin-overlay-layer" style={{position:'fixed',inset:0,pointerEvents:'none',zIndex:50}}>{plugins.flatMap(plugin=>plugin.widgets.map(widget=><OverlayWidgetView key={`${plugin.pluginId}:${widget.id}`} widget={widget}/>))}</div>
+  return <><FeatureOverlaySurface slug={slug}/>{plugins.length>0&&<div className="plugin-overlay-layer" style={{position:'fixed',inset:0,pointerEvents:'none',zIndex:50}}>{plugins.flatMap(plugin=>plugin.widgets.map(widget=><OverlayWidgetView key={`${plugin.pluginId}:${widget.id}`} widget={widget}/>))}</div>}</>
 }
 
 function OverlayWidgetView({widget}:{widget:OverlayWidget}){
