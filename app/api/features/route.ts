@@ -10,8 +10,17 @@ async function owner(){const sb=await createServerSupabase();const{data:{user}}=
 export async function GET(){
   const user=await owner();if(!user)return NextResponse.json({error:'Unauthorized'},{status:401})
   const admin=createAdminSupabase()
-  try{return NextResponse.json({features:FEATURE_DEFINITIONS,flags:await featureFlags(admin,user.id)})}
-  catch(error){console.error('Feature list failed',error);return NextResponse.json({error:'Failed to load feature settings'},{status:500})}
+  try{
+    const[flagsResult,tests]=await Promise.all([featureFlags(admin,user.id),admin.from('feature_test_results').select('feature_key,status,tested_at,test_kind,details')])
+    if(tests.error)throw tests.error
+    const testMap=new Map((tests.data||[]).map((row:any)=>[String(row.feature_key),row]))
+    const features=FEATURE_DEFINITIONS.map(feature=>{
+      const verification:any=testMap.get(feature.key)||null
+      const verified=verification?.status==='pass'&&['e2e','user'].includes(String(verification?.test_kind||''))
+      return{...feature,release:verified?'stable':'beta',verification:verification?{status:verification.status,testedAt:verification.tested_at,testKind:verification.test_kind,details:verification.details}:null}
+    })
+    return NextResponse.json({features,flags:flagsResult})
+  }catch(error){console.error('Feature list failed',error);return NextResponse.json({error:'Failed to load feature settings'},{status:500})}
 }
 
 export async function PATCH(request:NextRequest){
@@ -26,6 +35,7 @@ export async function PATCH(request:NextRequest){
     current[key]=body.enabled
     const{error}=await admin.from('streamer_feature_flags').upsert({owner_id:user.id,flags:current,updated_at:new Date().toISOString()},{onConflict:'owner_id'})
     if(error)throw error
+    await admin.from('audit_events').insert({owner_id:user.id,actor_id:user.id,event_type:'feature_toggle',metadata:{feature_key:key,enabled:body.enabled}}).then(()=>{}).catch(()=>{})
     return NextResponse.json({ok:true,key,enabled:body.enabled,flags:current})
   }catch(error){console.error('Feature update failed',error);return NextResponse.json({error:'Failed to update feature'},{status:500})}
 }
