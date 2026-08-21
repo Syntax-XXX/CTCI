@@ -9,7 +9,7 @@ const features=read('lib/features.ts')
 const keys=[...features.matchAll(/\{key:'([^']+)'/g)].map(m=>m[1])
 pass('feature registry is populated',keys.length>=40,`found ${keys.length}`)
 pass('feature keys are unique',new Set(keys).size===keys.length)
-pass('all optional feature defaults are false',features.includes('Object.fromEntries(FEATURE_DEFINITIONS.map(f=>[f.key,false]))'))
+pass('all optional feature defaults are false',features.includes('raw[feature.key]===true')&&features.includes('data?.flags')&&!features.includes('raw[feature.key]!==false'))
 
 const gated=read('app/api/features/[key]/route.ts')
 pass('feature workbench authenticates users',gated.includes("return NextResponse.json({error:'Unauthorized'}"))
