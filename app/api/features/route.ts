@@ -35,7 +35,8 @@ export async function PATCH(request:NextRequest){
     current[key]=body.enabled
     const{error}=await admin.from('streamer_feature_flags').upsert({owner_id:user.id,flags:current,updated_at:new Date().toISOString()},{onConflict:'owner_id'})
     if(error)throw error
-    await admin.from('audit_events').insert({owner_id:user.id,actor_id:user.id,event_type:'feature_toggle',metadata:{feature_key:key,enabled:body.enabled}}).then(()=>{}).catch(()=>{})
+    const audit=await admin.from('audit_events').insert({owner_id:user.id,actor_user_id:user.id,action:'feature_toggle',target_type:'feature',target_id:key,metadata:{enabled:body.enabled}})
+    if(audit.error)console.warn('Feature audit log failed',audit.error)
     return NextResponse.json({ok:true,key,enabled:body.enabled,flags:current})
   }catch(error){console.error('Feature update failed',error);return NextResponse.json({error:'Failed to update feature'},{status:500})}
 }
