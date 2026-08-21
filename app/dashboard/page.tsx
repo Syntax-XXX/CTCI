@@ -65,7 +65,7 @@ export default function Dashboard(){
       <section className="setup-grid" aria-label="Streamer setup">
         {setup.map((step,i)=><article className={`setup-card ${step.done?'done':''}`} key={step.title}>
           <div className="setup-index">{step.done?'✓':i+1}</div><div className="setup-copy"><h3>{step.title}</h3><p>{step.text}</p></div>
-          {step.copy?<button className="btn compact primary" onClick={()=>copyObs(obsUrl)}>{step.action}</button>:<Link className={`btn compact ${step.done?'':'primary'}`} href={step.href}>{step.action}</Link>}
+          {step.copy?<button className="btn compact primary" onClick={()=>copyObs(obsUrl)}>{step.action}</button>:step.href.startsWith('/api/')?<a className={`btn compact ${step.done?'':'primary'}`} href={step.href}>{step.action}</a>:<Link className={`btn compact ${step.done?'':'primary'}`} href={step.href}>{step.action}</Link>}
         </article>)}
       </section>
 
