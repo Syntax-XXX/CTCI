@@ -6,7 +6,7 @@ import { PluginOverlaySurface } from '@/components/PluginSurface'
 import { createClient } from '@/lib/supabase/client'
 
 type Overlay = {
-  id:string; user_id:string; slug:string; channel_login:string|null;
+  id:string; primary_overlay_id?:string; instance_id?:string|null; instance_name?:string; user_id:string; slug:string; channel_login:string|null;
   font_family:string; username_font_family:string; font_size:number; username_font_size:number; font_weight:number; message_spacing:number;
   username_color:string; message_color:string; background_color:string; background_opacity:number;
   bubble_color:string; bubble_opacity:number; border_radius:number;
@@ -22,8 +22,8 @@ type ChatterStyle = {
 }
 
 type Fragment = { type:string; text:string; emote?:{id:string}|null }
-type EventRow = { id:string; chatter_login:string; chatter_name:string; message_text:string; color:string|null; badges:any[]; fragments:Fragment[]; created_at:string }
-type Message = { id:string; user:string; name:string; text:string; color?:string|null; time:Date; fragments:Fragment[]; badges:any[] }
+type EventRow = { id:string; source?:'twitch'|'youtube'|string; event_type?:string; event_data?:any; chatter_login:string; chatter_name:string; message_text:string; color:string|null; badges:any[]; fragments:Fragment[]; created_at:string }
+type Message = { id:string; source:string; eventType:string; eventData:any; user:string; name:string; text:string; color?:string|null; time:Date; fragments:Fragment[]; badges:any[] }
 type Badge = { id:string; slug:string; name:string; icon_text:string|null; icon_url:string|null; color:string; owner_id:string|null }
 type BadgeAssignment = { badge_id:string; twitch_login:string; owner_id:string|null }
 type Viewport = { width:number; height:number; scale:number }
@@ -39,6 +39,7 @@ body:before{display:none!important;content:none!important}
 .overlay-root .chat-emote{display:inline-block!important;width:auto!important;height:auto!important;max-width:min(2.5em,18vw)!important;max-height:1.45em!important;object-fit:contain!important;vertical-align:middle!important}
 .overlay-root .custom-badge{display:inline-flex!important;max-width:min(14em,45vw)!important;min-width:0!important;vertical-align:middle!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;font-size:.72em!important;line-height:1.15!important}
 .overlay-root .custom-badge img{display:block!important;width:auto!important;height:auto!important;max-width:2.2em!important;max-height:1.15em!important;object-fit:contain!important}
+.overlay-root .platform-icon{display:inline-flex!important;width:1em!important;height:1em!important;vertical-align:-.12em!important;margin-right:.28em!important;align-items:center!important;justify-content:center!important}
 .overlay-root .plugin-overlay-layer{max-width:100vw!important;max-height:100vh!important;overflow:hidden!important}
 @media (max-width:480px),(max-height:270px){.overlay-root .chat-message{line-height:1.2!important}.overlay-root .custom-badge{font-size:.64em!important}}
 `
@@ -55,6 +56,7 @@ export default function OverlayPage(){
   const[clock,setClock]=useState(Date.now())
   const[viewport,setViewport]=useState<Viewport>({width:1920,height:1080,scale:1})
   const reconnectTimer=useRef<number|null>(null)
+  const instanceOverrides=useRef<Record<string,any>>({})
 
   useEffect(()=>{
     document.documentElement.style.background='transparent'
@@ -91,24 +93,31 @@ export default function OverlayPage(){
       if(disposed)return
       if(channel){await supabase.removeChannel(channel);channel=null}
 
-      const{data,error}=await supabase.from('overlays').select('*').eq('slug',params.slug).eq('enabled',true).single()
-      if(error||!data){setError('Overlay not found or disabled');return}
+      const response=await fetch(`/api/overlay/config?slug=${encodeURIComponent(params.slug)}`,{cache:'no-store'})
+      const body=await response.json().catch(()=>({}))
+      if(!response.ok||!body.overlay){setError(body.error||'Overlay not found or disabled');return}
 
-      const current=data as Overlay
+      const current=body.overlay as Overlay
+      instanceOverrides.current=body.instance===true&&body.instanceSettings&&typeof body.instanceSettings==='object'?body.instanceSettings:{}
       setError('')
       setOverlay(current)
-      await loadExtras(current.user_id,current.id,current.max_messages)
+      const primaryId=current.primary_overlay_id||current.id
+      await loadExtras(current.user_id,primaryId,current.max_messages)
       if(disposed)return
 
-      channel=supabase.channel(`ctci-overlay-${current.id}-${Math.random().toString(36).slice(2)}`)
-        .on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_events',filter:`overlay_id=eq.${current.id}`},payload=>{
+      channel=supabase.channel(`ctci-overlay-${primaryId}-${Math.random().toString(36).slice(2)}`)
+        .on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_events',filter:`overlay_id=eq.${primaryId}`},payload=>{
           const next=toMessage(payload.new as EventRow)
           setMessages(existing=>{
             if(existing.some(message=>message.id===next.id))return existing
             return[...existing,next].slice(-100)
           })
         })
-        .on('postgres_changes',{event:'UPDATE',schema:'public',table:'overlays',filter:`id=eq.${current.id}`},payload=>setOverlay(payload.new as Overlay))
+        .on('postgres_changes',{event:'UPDATE',schema:'public',table:'overlays',filter:`id=eq.${primaryId}`},payload=>setOverlay(existing=>{
+          const base=payload.new as Overlay
+          if(!existing?.instance_id)return base
+          return{...base,...instanceOverrides.current,id:base.id,primary_overlay_id:base.id,user_id:base.user_id,slug:params.slug,instance_id:existing.instance_id,instance_name:existing.instance_name}
+        }))
         .on('postgres_changes',{event:'*',schema:'public',table:'chatter_styles',filter:`owner_id=eq.${current.user_id}`},()=>refreshStyles(current.user_id))
         .on('postgres_changes',{event:'*',schema:'public',table:'badge_assignments'},()=>refreshBadges(current.user_id))
         .on('postgres_changes',{event:'*',schema:'public',table:'badge_definitions'},()=>refreshBadges(current.user_id))
@@ -139,7 +148,7 @@ export default function OverlayPage(){
     const[styleRes,fontRes,eventRes]=await Promise.all([
       supabase.from('chatter_styles').select('*').eq('owner_id',userId),
       supabase.from('font_assets').select('label,storage_path').eq('owner_id',userId),
-      supabase.from('chat_events').select('id,chatter_login,chatter_name,message_text,color,badges,fragments,created_at').eq('overlay_id',overlayId).order('created_at',{ascending:false}).limit(max),
+      supabase.from('chat_events').select('id,source,event_type,event_data,chatter_login,chatter_name,message_text,color,badges,fragments,created_at').eq('overlay_id',overlayId).order('created_at',{ascending:false}).limit(max),
     ])
     const styleMap:Record<string,ChatterStyle>={}
     ;(styleRes.data||[]).forEach((row:any)=>{styleMap[String(row.chatter_login).toLowerCase()]=row as ChatterStyle})
@@ -197,7 +206,7 @@ export default function OverlayPage(){
   const ordered=overlay.direction==='top-down'?active:[...active].reverse()
   const rootStyle:any={fontFamily:overlay.font_family,fontSize:baseFont,fontWeight:overlay.font_weight,'--ctci-safe':`${safe}px`}
 
-  return <div className={`overlay-root direction-${overlay.direction} theme-${overlay.theme} density-${overlay.density}`} style={rootStyle} data-viewport={`${viewport.width}x${viewport.height}`}>
+  return <div className={`overlay-root direction-${overlay.direction} theme-${overlay.theme} density-${overlay.density}`} style={rootStyle} data-viewport={`${viewport.width}x${viewport.height}`} data-overlay-instance={overlay.instance_id||'primary'}>
     <style>{OVERLAY_RESET_CSS+'\n'+fontCss+'\n'+overlay.custom_css}</style>
     {ordered.slice(0,visibleLimit).map(message=>{
       const userKey=message.user.toLowerCase()
@@ -209,32 +218,40 @@ export default function OverlayPage(){
       const nameRainbow=overlay.rainbow_mode==='usernames'||overlay.rainbow_mode==='all'
       const glow=style?.glow_color||roleStyle.glow_color||(overlay.glow_enabled?overlay.glow_color:null)
       const customBadges=badges[userKey]||[]
-      const classes=['msg','chat-message',`anim-${overlay.animation}`,messageRainbow?'rainbow-text':''].filter(Boolean).join(' ')
+      const paid=message.eventType!=='message'
+      const classes=['msg','chat-message',`anim-${overlay.animation}`,messageRainbow?'rainbow-text':'',paid?'special-event':''].filter(Boolean).join(' ')
       const messageFont=clamp((style?.font_size||overlay.font_size)*scale,10,192)
 
       return <div key={message.id} className={classes} style={{
-        background:`rgba(${hex(overlay.bubble_color)},${overlay.bubble_opacity})`,
+        background:`rgba(${hex(overlay.bubble_color)},${paid?Math.min(1,overlay.bubble_opacity+.12):overlay.bubble_opacity})`,
         borderRadius:radius,
         marginTop:spacing,
         color:style?.message_color||roleStyle.message_color||overlay.message_color,
         fontFamily:style?.font_family||roleStyle.font_family||overlay.font_family,
         fontSize:messageFont,
         fontWeight:style?.font_weight||overlay.font_weight,
-        outline:style?.highlight?`${Math.max(1,2*scale)}px solid rgba(145,71,255,.7)`:'none',
+        outline:style?.highlight?`${Math.max(1,2*scale)}px solid rgba(145,71,255,.7)`:paid?`${Math.max(1,1.5*scale)}px solid rgba(255,255,255,.28)`:'none',
         textShadow:glow?`0 0 ${Math.max(4,8*scale)}px ${glow},0 0 ${Math.max(8,18*scale)}px ${glow}`:undefined,
       }}>
         {overlay.show_timestamps&&<span className="small timestamp">{message.time.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})} </span>}
+        <PlatformIcon source={message.source}/>
         {customBadges.map(badge=><span className={`custom-badge badge-${badge.slug}`} key={badge.id} title={badge.name} style={{borderColor:badge.color,color:badge.color}}>{badge.icon_url?<img src={badge.icon_url} alt={badge.name}/>:badge.icon_text||badge.name}</span>)}
         {overlay.show_usernames&&<strong className={nameRainbow?'rainbow-text':''} style={{
           color:nameRainbow?undefined:style?.username_color||roleStyle.username_color||message.color||overlay.username_color,
           fontFamily:roleStyle.username_font_family||overlay.username_font_family,
           fontSize:usernameFont,
         }}>{style?.icon?`${style.icon} `:''}{style?.nickname||message.name}</strong>}
+        {paid&&<span className="small" style={{marginLeft:'.4em',opacity:.72}}>{message.eventType.replaceAll('_',' ')}</span>}
         {' '}<MessageBody message={message} showEmotes={overlay.show_emotes}/>
       </div>
     })}
     <PluginOverlaySurface slug={params.slug}/>
   </div>
+}
+
+function PlatformIcon({source}:{source:string}){
+  if(source==='youtube')return <span className="platform-icon" title="YouTube" aria-label="YouTube"><svg viewBox="0 0 24 24" width="100%" height="100%" aria-hidden="true"><rect x="1" y="5" width="22" height="14" rx="4" fill="#ff0033"/><path d="M10 9l6 3-6 3z" fill="white"/></svg></span>
+  return <span className="platform-icon" title="Twitch" aria-label="Twitch"><svg viewBox="0 0 24 24" width="100%" height="100%" aria-hidden="true"><path fill="#9147ff" d="M3 2h18v13l-5 5h-4l-3 2v-2H5V6z"/><path fill="white" d="M7 5h11v8l-3 3h-4l-2 2v-2H7zm4 3v5h2V8zm4 0v5h2V8z"/></svg></span>
 }
 
 function MessageBody({message,showEmotes}:{message:Message;showEmotes:boolean}){
@@ -255,9 +272,9 @@ function roleFor(badges:any[]){
 }
 
 function toMessage(row:EventRow):Message{
-  return{id:row.id,user:row.chatter_login,name:row.chatter_name||row.chatter_login,text:row.message_text,color:row.color,time:new Date(row.created_at),fragments:Array.isArray(row.fragments)?row.fragments:[],badges:Array.isArray(row.badges)?row.badges:[]}
+  return{id:row.id,source:String(row.source||'twitch'),eventType:String(row.event_type||'message'),eventData:row.event_data||{},user:row.chatter_login,name:cleanName(row.chatter_name||row.chatter_login),text:row.message_text,color:row.color,time:new Date(row.created_at),fragments:Array.isArray(row.fragments)?row.fragments:[],badges:Array.isArray(row.badges)?row.badges:[]}
 }
-
+function cleanName(value:string){return value.replace(/^🟣\s*/,'').replace(/^🔴▶\s*/,'')}
 function clamp(value:number,min:number,max:number){return Math.min(max,Math.max(min,Number.isFinite(value)?value:min))}
 function hex(value:string){
   const raw=value.replace('#','')
