@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
     if (overlayError) throw overlayError
     if (!overlay?.enabled) return new NextResponse(null, { status: 204 })
     const text = String(event.message?.text || ''),roleSet=getRoles(event)
-    const actor={source:'twitch' as const,userId:String(event.chatter_user_id),login:String(event.chatter_user_login||'').toLowerCase(),displayName:String(event.chatter_user_name||event.chatter_user_login||'unknown'),roles:[...roleSet]}
+    const actor={source:'twitch' as const,userId:String(event.chatter_user_id),login:String(event.chatter_user_login||'').toLowerCase(),displayName:String(event.chatter_user_name||event.chatter_user_login||'unknown'),roles:[...roleSet],eventId:String(event.message_id)}
     try{await touchStreamSession(admin,profile.id,{source:'twitch'})}catch(error){console.error('Twitch stream session tracking failed',error)}
 
     const moderation=await evaluateModeration(admin,{ownerId:profile.id,source:'twitch',userId:actor.userId,displayName:actor.displayName,text})
