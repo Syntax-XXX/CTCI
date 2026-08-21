@@ -14,19 +14,14 @@ type Overlay = {
   animation:string; direction:string; custom_css:string; max_messages:number; fade_seconds:number;
   theme:string; density:string; rainbow_mode:string; glow_enabled:boolean; glow_color:string; role_styles:Record<string,any>;
 }
-
-type ChatterStyle = {
-  chatter_login:string; nickname:string|null; username_color:string|null; message_color:string|null;
-  font_family:string|null; font_size:number|null; font_weight:number|null; highlight:boolean; hidden:boolean;
-  icon:string|null; glow_color:string|null;
-}
-
+type ChatterStyle = {chatter_login:string;nickname:string|null;username_color:string|null;message_color:string|null;font_family:string|null;font_size:number|null;font_weight:number|null;highlight:boolean;hidden:boolean;icon:string|null;glow_color:string|null}
 type Fragment = { type:string; text:string; emote?:{id:string}|null }
 type EventRow = { id:string; source?:'twitch'|'youtube'|string; event_type?:string; event_data?:any; chatter_login:string; chatter_name:string; message_text:string; color:string|null; badges:any[]; fragments:Fragment[]; created_at:string }
 type Message = { id:string; source:string; eventType:string; eventData:any; user:string; name:string; text:string; color?:string|null; time:Date; fragments:Fragment[]; badges:any[] }
 type Badge = { id:string; slug:string; name:string; icon_text:string|null; icon_url:string|null; color:string; owner_id:string|null }
 type BadgeAssignment = { badge_id:string; twitch_login:string; owner_id:string|null }
 type Viewport = { width:number; height:number; scale:number }
+type ExternalEmote={code:string;url:string;provider:string}
 
 const OVERLAY_RESET_CSS = `
 html,body,#__next{margin:0!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;background:transparent!important;background-image:none!important;overflow:hidden!important}
@@ -45,240 +40,48 @@ body:before{display:none!important;content:none!important}
 `
 
 export default function OverlayPage(){
-  const params=useParams<{slug:string}>()
-  const supabase=useMemo(()=>createClient(),[])
-  const[overlay,setOverlay]=useState<Overlay|null>(null)
-  const[styles,setStyles]=useState<Record<string,ChatterStyle>>({})
-  const[messages,setMessages]=useState<Message[]>([])
-  const[fontCss,setFontCss]=useState('')
-  const[badges,setBadges]=useState<Record<string,Badge[]>>({})
-  const[error,setError]=useState('')
-  const[clock,setClock]=useState(Date.now())
-  const[viewport,setViewport]=useState<Viewport>({width:1920,height:1080,scale:1})
-  const reconnectTimer=useRef<number|null>(null)
-  const instanceOverrides=useRef<Record<string,any>>({})
+  const params=useParams<{slug:string}>(),supabase=useMemo(()=>createClient(),[])
+  const[overlay,setOverlay]=useState<Overlay|null>(null),[styles,setStyles]=useState<Record<string,ChatterStyle>>({}),[messages,setMessages]=useState<Message[]>([]),[fontCss,setFontCss]=useState(''),[badges,setBadges]=useState<Record<string,Badge[]>>({}),[externalEmotes,setExternalEmotes]=useState<Record<string,ExternalEmote>>({}),[error,setError]=useState(''),[clock,setClock]=useState(Date.now()),[viewport,setViewport]=useState<Viewport>({width:1920,height:1080,scale:1})
+  const reconnectTimer=useRef<number|null>(null),instanceOverrides=useRef<Record<string,any>>({})
+
+  useEffect(()=>{document.documentElement.style.background='transparent';document.body.style.background='transparent';document.body.style.backgroundImage='none';return()=>{document.documentElement.style.removeProperty('background');document.body.style.removeProperty('background');document.body.style.removeProperty('background-image')}},[])
+  useEffect(()=>{let frame=0;const measure=()=>{frame=0;const width=Math.max(1,window.innerWidth||document.documentElement.clientWidth||1920),height=Math.max(1,window.innerHeight||document.documentElement.clientHeight||1080),natural=Math.min(width/1920,height/1080);setViewport({width,height,scale:clamp(natural,.5,2.5)})},schedule=()=>{if(frame)cancelAnimationFrame(frame);frame=requestAnimationFrame(measure)};measure();window.addEventListener('resize',schedule,{passive:true});window.visualViewport?.addEventListener('resize',schedule,{passive:true});return()=>{if(frame)cancelAnimationFrame(frame);window.removeEventListener('resize',schedule);window.visualViewport?.removeEventListener('resize',schedule)}},[])
+  useEffect(()=>{let alive=true,timer:number|undefined;async function load(){try{const r=await fetch(`/api/emotes?slug=${encodeURIComponent(params.slug)}`,{cache:'no-store'});if(r.ok){const b=await r.json(),map:Record<string,ExternalEmote>={};for(const e of b.emotes||[])if(e?.code&&e?.url)map[String(e.code)]={code:String(e.code),url:String(e.url),provider:String(e.provider||'external')};if(alive)setExternalEmotes(map)}}catch{}finally{if(alive)timer=window.setTimeout(load,5*60*1000)}}void load();return()=>{alive=false;if(timer)window.clearTimeout(timer)}},[params.slug])
 
   useEffect(()=>{
-    document.documentElement.style.background='transparent'
-    document.body.style.background='transparent'
-    document.body.style.backgroundImage='none'
-    return()=>{
-      document.documentElement.style.removeProperty('background')
-      document.body.style.removeProperty('background')
-      document.body.style.removeProperty('background-image')
-    }
-  },[])
-
-  useEffect(()=>{
-    let frame=0
-    const measure=()=>{
-      frame=0
-      const width=Math.max(1,window.innerWidth||document.documentElement.clientWidth||1920)
-      const height=Math.max(1,window.innerHeight||document.documentElement.clientHeight||1080)
-      const natural=Math.min(width/1920,height/1080)
-      setViewport({width,height,scale:clamp(natural,.5,2.5)})
-    }
-    const schedule=()=>{if(frame)cancelAnimationFrame(frame);frame=requestAnimationFrame(measure)}
-    measure()
-    window.addEventListener('resize',schedule,{passive:true})
-    window.visualViewport?.addEventListener('resize',schedule,{passive:true})
-    return()=>{if(frame)cancelAnimationFrame(frame);window.removeEventListener('resize',schedule);window.visualViewport?.removeEventListener('resize',schedule)}
-  },[])
-
-  useEffect(()=>{
-    let disposed=false
-    let channel:any=null
-
+    let disposed=false,channel:any=null
     async function start(){
-      if(disposed)return
-      if(channel){await supabase.removeChannel(channel);channel=null}
-
-      const response=await fetch(`/api/overlay/config?slug=${encodeURIComponent(params.slug)}`,{cache:'no-store'})
-      const body=await response.json().catch(()=>({}))
-      if(!response.ok||!body.overlay){setError(body.error||'Overlay not found or disabled');return}
-
-      const current=body.overlay as Overlay
-      instanceOverrides.current=body.instance===true&&body.instanceSettings&&typeof body.instanceSettings==='object'?body.instanceSettings:{}
-      setError('')
-      setOverlay(current)
-      const primaryId=current.primary_overlay_id||current.id
-      await loadExtras(current.user_id,primaryId,current.max_messages)
-      if(disposed)return
-
+      if(disposed)return;if(channel){await supabase.removeChannel(channel);channel=null}
+      const response=await fetch(`/api/overlay/config?slug=${encodeURIComponent(params.slug)}`,{cache:'no-store'}),body=await response.json().catch(()=>({}));if(!response.ok||!body.overlay){setError(body.error||'Overlay not found or disabled');return}
+      const current=body.overlay as Overlay;instanceOverrides.current=body.instance===true&&body.instanceSettings&&typeof body.instanceSettings==='object'?body.instanceSettings:{};setError('');setOverlay(current);const primaryId=current.primary_overlay_id||current.id;await loadExtras(current.user_id,primaryId,current.max_messages);if(disposed)return
       channel=supabase.channel(`ctci-overlay-${primaryId}-${Math.random().toString(36).slice(2)}`)
-        .on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_events',filter:`overlay_id=eq.${primaryId}`},payload=>{
-          const next=toMessage(payload.new as EventRow)
-          setMessages(existing=>{
-            if(existing.some(message=>message.id===next.id))return existing
-            return[...existing,next].slice(-100)
-          })
-        })
-        .on('postgres_changes',{event:'UPDATE',schema:'public',table:'overlays',filter:`id=eq.${primaryId}`},payload=>setOverlay(existing=>{
-          const base=payload.new as Overlay
-          if(!existing?.instance_id)return base
-          return{...base,...instanceOverrides.current,id:base.id,primary_overlay_id:base.id,user_id:base.user_id,slug:params.slug,instance_id:existing.instance_id,instance_name:existing.instance_name}
-        }))
+        .on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_events',filter:`overlay_id=eq.${primaryId}`},payload=>{const next=toMessage(payload.new as EventRow);setMessages(existing=>existing.some(message=>message.id===next.id)?existing:[...existing,next].slice(-100))})
+        .on('postgres_changes',{event:'UPDATE',schema:'public',table:'overlays',filter:`id=eq.${primaryId}`},payload=>setOverlay(existing=>{const base=payload.new as Overlay;if(!existing?.instance_id)return base;return{...base,...instanceOverrides.current,id:base.id,primary_overlay_id:base.id,user_id:base.user_id,slug:params.slug,instance_id:existing.instance_id,instance_name:existing.instance_name}}))
         .on('postgres_changes',{event:'*',schema:'public',table:'chatter_styles',filter:`owner_id=eq.${current.user_id}`},()=>refreshStyles(current.user_id))
         .on('postgres_changes',{event:'*',schema:'public',table:'badge_assignments'},()=>refreshBadges(current.user_id))
         .on('postgres_changes',{event:'*',schema:'public',table:'badge_definitions'},()=>refreshBadges(current.user_id))
-        .subscribe(status=>{
-          if(disposed)return
-          if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED'){
-            if(reconnectTimer.current)window.clearTimeout(reconnectTimer.current)
-            reconnectTimer.current=window.setTimeout(()=>{void start()},1500)
-          }
-        })
+        .subscribe(status=>{if(disposed)return;if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED'){if(reconnectTimer.current)window.clearTimeout(reconnectTimer.current);reconnectTimer.current=window.setTimeout(()=>{void start()},1500)}})
     }
-
-    void start()
-    return()=>{
-      disposed=true
-      if(reconnectTimer.current)window.clearTimeout(reconnectTimer.current)
-      if(channel)void supabase.removeChannel(channel)
-    }
+    void start();return()=>{disposed=true;if(reconnectTimer.current)window.clearTimeout(reconnectTimer.current);if(channel)void supabase.removeChannel(channel)}
   },[params.slug,supabase])
+  useEffect(()=>{if(!overlay?.fade_seconds)return;const timer=window.setInterval(()=>setClock(Date.now()),1000);return()=>window.clearInterval(timer)},[overlay?.fade_seconds])
 
-  useEffect(()=>{
-    if(!overlay?.fade_seconds)return
-    const timer=window.setInterval(()=>setClock(Date.now()),1000)
-    return()=>window.clearInterval(timer)
-  },[overlay?.fade_seconds])
-
-  async function loadExtras(userId:string,overlayId:string,max:number){
-    const[styleRes,fontRes,eventRes]=await Promise.all([
-      supabase.from('chatter_styles').select('*').eq('owner_id',userId),
-      supabase.from('font_assets').select('label,storage_path').eq('owner_id',userId),
-      supabase.from('chat_events').select('id,source,event_type,event_data,chatter_login,chatter_name,message_text,color,badges,fragments,created_at').eq('overlay_id',overlayId).order('created_at',{ascending:false}).limit(max),
-    ])
-    const styleMap:Record<string,ChatterStyle>={}
-    ;(styleRes.data||[]).forEach((row:any)=>{styleMap[String(row.chatter_login).toLowerCase()]=row as ChatterStyle})
-    setStyles(styleMap)
-    setFontCss((fontRes.data||[]).map((font:any)=>{
-      const url=supabase.storage.from('ctci-fonts').getPublicUrl(font.storage_path).data.publicUrl
-      return `@font-face{font-family:${JSON.stringify(font.label)};src:url(${JSON.stringify(url)});font-display:swap}`
-    }).join('\n'))
-    setMessages(((eventRes.data||[]) as EventRow[]).reverse().map(toMessage))
-    await refreshBadges(userId)
-  }
-
-  async function refreshStyles(userId:string){
-    const result=await supabase.from('chatter_styles').select('*').eq('owner_id',userId)
-    const map:Record<string,ChatterStyle>={}
-    ;(result.data||[]).forEach((row:any)=>{map[String(row.chatter_login).toLowerCase()]=row as ChatterStyle})
-    setStyles(map)
-  }
-
-  async function refreshBadges(userId:string){
-    const[definitions,assignments]=await Promise.all([
-      supabase.from('badge_definitions').select('id,slug,name,icon_text,icon_url,color,owner_id').eq('enabled',true),
-      supabase.from('badge_assignments').select('badge_id,twitch_login,owner_id'),
-    ])
-    const definitionMap=new Map<string,Badge>()
-    for(const row of definitions.data||[]){
-      const badge=row as Badge
-      if(badge.owner_id===null||badge.owner_id===userId)definitionMap.set(badge.id,badge)
-    }
-    const map:Record<string,Badge[]>={}
-    for(const row of(assignments.data||[]) as BadgeAssignment[]){
-      if(row.owner_id!==null&&row.owner_id!==userId)continue
-      const badge=definitionMap.get(row.badge_id)
-      if(!badge)continue
-      const login=row.twitch_login.toLowerCase()
-      ;(map[login]??=[]).push(badge)
-    }
-    setBadges(map)
-  }
+  async function loadExtras(userId:string,overlayId:string,max:number){const[styleRes,fontRes,eventRes]=await Promise.all([supabase.from('chatter_styles').select('*').eq('owner_id',userId),supabase.from('font_assets').select('label,storage_path').eq('owner_id',userId),supabase.from('chat_events').select('id,source,event_type,event_data,chatter_login,chatter_name,message_text,color,badges,fragments,created_at').eq('overlay_id',overlayId).order('created_at',{ascending:false}).limit(max)]);const styleMap:Record<string,ChatterStyle>={};(styleRes.data||[]).forEach((row:any)=>{styleMap[String(row.chatter_login).toLowerCase()]=row as ChatterStyle});setStyles(styleMap);setFontCss((fontRes.data||[]).map((font:any)=>{const url=supabase.storage.from('ctci-fonts').getPublicUrl(font.storage_path).data.publicUrl;return `@font-face{font-family:${JSON.stringify(font.label)};src:url(${JSON.stringify(url)});font-display:swap}`}).join('\n'));setMessages(((eventRes.data||[]) as EventRow[]).reverse().map(toMessage));await refreshBadges(userId)}
+  async function refreshStyles(userId:string){const result=await supabase.from('chatter_styles').select('*').eq('owner_id',userId),map:Record<string,ChatterStyle>={};(result.data||[]).forEach((row:any)=>{map[String(row.chatter_login).toLowerCase()]=row as ChatterStyle});setStyles(map)}
+  async function refreshBadges(userId:string){const[definitions,assignments]=await Promise.all([supabase.from('badge_definitions').select('id,slug,name,icon_text,icon_url,color,owner_id').eq('enabled',true),supabase.from('badge_assignments').select('badge_id,twitch_login,owner_id')]),definitionMap=new Map<string,Badge>();for(const row of definitions.data||[]){const badge=row as Badge;if(badge.owner_id===null||badge.owner_id===userId)definitionMap.set(badge.id,badge)}const map:Record<string,Badge[]>={};for(const row of(assignments.data||[]) as BadgeAssignment[]){if(row.owner_id!==null&&row.owner_id!==userId)continue;const badge=definitionMap.get(row.badge_id);if(!badge)continue;const login=row.twitch_login.toLowerCase();(map[login]??=[]).push(badge)}setBadges(map)}
 
   if(error)return <div className="overlay-root"><style>{OVERLAY_RESET_CSS}</style><div className="msg danger">{error}</div></div>
   if(!overlay)return <div className="overlay-root"><style>{OVERLAY_RESET_CSS}</style></div>
+  const scale=viewport.scale,safe=clamp(Math.round(14*scale),4,48),baseFont=clamp(overlay.font_size*scale,10,192),usernameFont=clamp(overlay.username_font_size*scale,9,192),spacing=clamp(overlay.message_spacing*scale,0,96),radius=clamp(overlay.border_radius*scale,0,96),estimatedRow=Math.max(18,baseFont*1.55+spacing),availableHeight=Math.max(estimatedRow,viewport.height-safe*2),responsiveMax=Math.max(1,Math.floor(availableHeight/estimatedRow)),visibleLimit=Math.max(1,Math.min(overlay.max_messages,responsiveMax)),active=messages.filter(message=>overlay.fade_seconds===0||clock-message.time.getTime()<overlay.fade_seconds*1000),ordered=overlay.direction==='top-down'?active:[...active].reverse(),rootStyle:any={fontFamily:overlay.font_family,fontSize:baseFont,fontWeight:overlay.font_weight,'--ctci-safe':`${safe}px`}
 
-  const scale=viewport.scale
-  const safe=clamp(Math.round(14*scale),4,48)
-  const baseFont=clamp(overlay.font_size*scale,10,192)
-  const usernameFont=clamp(overlay.username_font_size*scale,9,192)
-  const spacing=clamp(overlay.message_spacing*scale,0,96)
-  const radius=clamp(overlay.border_radius*scale,0,96)
-  const estimatedRow=Math.max(18,baseFont*1.55+spacing)
-  const availableHeight=Math.max(estimatedRow,viewport.height-safe*2)
-  const responsiveMax=Math.max(1,Math.floor(availableHeight/estimatedRow))
-  const visibleLimit=Math.max(1,Math.min(overlay.max_messages,responsiveMax))
-  const active=messages.filter(message=>overlay.fade_seconds===0||clock-message.time.getTime()<overlay.fade_seconds*1000)
-  const ordered=overlay.direction==='top-down'?active:[...active].reverse()
-  const rootStyle:any={fontFamily:overlay.font_family,fontSize:baseFont,fontWeight:overlay.font_weight,'--ctci-safe':`${safe}px`}
-
-  return <div className={`overlay-root direction-${overlay.direction} theme-${overlay.theme} density-${overlay.density}`} style={rootStyle} data-viewport={`${viewport.width}x${viewport.height}`} data-overlay-instance={overlay.instance_id||'primary'}>
-    <style>{OVERLAY_RESET_CSS+'\n'+fontCss+'\n'+overlay.custom_css}</style>
-    {ordered.slice(0,visibleLimit).map(message=>{
-      const userKey=message.user.toLowerCase()
-      const style=styles[userKey]
-      if(style?.hidden)return null
-      const role=roleFor(message.badges)
-      const roleStyle=overlay.role_styles?.[role]||{}
-      const messageRainbow=overlay.rainbow_mode==='messages'||overlay.rainbow_mode==='all'
-      const nameRainbow=overlay.rainbow_mode==='usernames'||overlay.rainbow_mode==='all'
-      const glow=style?.glow_color||roleStyle.glow_color||(overlay.glow_enabled?overlay.glow_color:null)
-      const customBadges=badges[userKey]||[]
-      const paid=message.eventType!=='message'
-      const classes=['msg','chat-message',`anim-${overlay.animation}`,messageRainbow?'rainbow-text':'',paid?'special-event':''].filter(Boolean).join(' ')
-      const messageFont=clamp((style?.font_size||overlay.font_size)*scale,10,192)
-
-      return <div key={message.id} className={classes} style={{
-        background:`rgba(${hex(overlay.bubble_color)},${paid?Math.min(1,overlay.bubble_opacity+.12):overlay.bubble_opacity})`,
-        borderRadius:radius,
-        marginTop:spacing,
-        color:style?.message_color||roleStyle.message_color||overlay.message_color,
-        fontFamily:style?.font_family||roleStyle.font_family||overlay.font_family,
-        fontSize:messageFont,
-        fontWeight:style?.font_weight||overlay.font_weight,
-        outline:style?.highlight?`${Math.max(1,2*scale)}px solid rgba(145,71,255,.7)`:paid?`${Math.max(1,1.5*scale)}px solid rgba(255,255,255,.28)`:'none',
-        textShadow:glow?`0 0 ${Math.max(4,8*scale)}px ${glow},0 0 ${Math.max(8,18*scale)}px ${glow}`:undefined,
-      }}>
-        {overlay.show_timestamps&&<span className="small timestamp">{message.time.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})} </span>}
-        <PlatformIcon source={message.source}/>
-        {customBadges.map(badge=><span className={`custom-badge badge-${badge.slug}`} key={badge.id} title={badge.name} style={{borderColor:badge.color,color:badge.color}}>{badge.icon_url?<img src={badge.icon_url} alt={badge.name}/>:badge.icon_text||badge.name}</span>)}
-        {overlay.show_usernames&&<strong className={nameRainbow?'rainbow-text':''} style={{
-          color:nameRainbow?undefined:style?.username_color||roleStyle.username_color||message.color||overlay.username_color,
-          fontFamily:roleStyle.username_font_family||overlay.username_font_family,
-          fontSize:usernameFont,
-        }}>{style?.icon?`${style.icon} `:''}{style?.nickname||message.name}</strong>}
-        {paid&&<span className="small" style={{marginLeft:'.4em',opacity:.72}}>{message.eventType.replaceAll('_',' ')}</span>}
-        {' '}<MessageBody message={message} showEmotes={overlay.show_emotes}/>
-      </div>
-    })}
-    <PluginOverlaySurface slug={params.slug}/>
-  </div>
+  return <div className={`overlay-root direction-${overlay.direction} theme-${overlay.theme} density-${overlay.density}`} style={rootStyle} data-viewport={`${viewport.width}x${viewport.height}`} data-overlay-instance={overlay.instance_id||'primary'}><style>{OVERLAY_RESET_CSS+'\n'+fontCss+'\n'+overlay.custom_css}</style>{ordered.slice(0,visibleLimit).map(message=>{const userKey=message.user.toLowerCase(),style=styles[userKey];if(style?.hidden)return null;const role=roleFor(message.badges),roleStyle=overlay.role_styles?.[role]||{},messageRainbow=overlay.rainbow_mode==='messages'||overlay.rainbow_mode==='all',nameRainbow=overlay.rainbow_mode==='usernames'||overlay.rainbow_mode==='all',glow=style?.glow_color||roleStyle.glow_color||(overlay.glow_enabled?overlay.glow_color:null),customBadges=badges[userKey]||[],paid=message.eventType!=='message',classes=['msg','chat-message',`anim-${overlay.animation}`,messageRainbow?'rainbow-text':'',paid?'special-event':''].filter(Boolean).join(' '),messageFont=clamp((style?.font_size||overlay.font_size)*scale,10,192);return <div key={message.id} className={classes} style={{background:`rgba(${hex(overlay.bubble_color)},${paid?Math.min(1,overlay.bubble_opacity+.12):overlay.bubble_opacity})`,borderRadius:radius,marginTop:spacing,color:style?.message_color||roleStyle.message_color||overlay.message_color,fontFamily:style?.font_family||roleStyle.font_family||overlay.font_family,fontSize:messageFont,fontWeight:style?.font_weight||overlay.font_weight,outline:style?.highlight?`${Math.max(1,2*scale)}px solid rgba(145,71,255,.7)`:paid?`${Math.max(1,1.5*scale)}px solid rgba(255,255,255,.28)`:'none',textShadow:glow?`0 0 ${Math.max(4,8*scale)}px ${glow},0 0 ${Math.max(8,18*scale)}px ${glow}`:undefined}}>{overlay.show_timestamps&&<span className="small timestamp">{message.time.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})} </span>}<PlatformIcon source={message.source}/>{customBadges.map(badge=><span className={`custom-badge badge-${badge.slug}`} key={badge.id} title={badge.name} style={{borderColor:badge.color,color:badge.color}}>{badge.icon_url?<img src={badge.icon_url} alt={badge.name}/>:badge.icon_text||badge.name}</span>)}{overlay.show_usernames&&<strong className={nameRainbow?'rainbow-text':''} style={{color:nameRainbow?undefined:style?.username_color||roleStyle.username_color||message.color||overlay.username_color,fontFamily:roleStyle.username_font_family||overlay.username_font_family,fontSize:usernameFont}}>{style?.icon?`${style.icon} `:''}{style?.nickname||message.name}</strong>}{paid&&<span className="small" style={{marginLeft:'.4em',opacity:.72}}>{message.eventType.replaceAll('_',' ')}</span>}{' '}<MessageBody message={message} showEmotes={overlay.show_emotes} externalEmotes={externalEmotes}/></div>})}<PluginOverlaySurface slug={params.slug}/></div>
 }
 
-function PlatformIcon({source}:{source:string}){
-  if(source==='youtube')return <span className="platform-icon" title="YouTube" aria-label="YouTube"><svg viewBox="0 0 24 24" width="100%" height="100%" aria-hidden="true"><rect x="1" y="5" width="22" height="14" rx="4" fill="#ff0033"/><path d="M10 9l6 3-6 3z" fill="white"/></svg></span>
-  return <span className="platform-icon" title="Twitch" aria-label="Twitch"><svg viewBox="0 0 24 24" width="100%" height="100%" aria-hidden="true"><path fill="#9147ff" d="M3 2h18v13l-5 5h-4l-3 2v-2H5V6z"/><path fill="white" d="M7 5h11v8l-3 3h-4l-2 2v-2H7zm4 3v5h2V8zm4 0v5h2V8z"/></svg></span>
-}
-
-function MessageBody({message,showEmotes}:{message:Message;showEmotes:boolean}){
-  if(!showEmotes||!message.fragments?.length)return <>{message.text}</>
-  return <>{message.fragments.map((fragment,index)=>fragment.type==='emote'&&fragment.emote?.id
-    ?<img key={index} className="chat-emote" alt={fragment.text} src={`https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(fragment.emote.id)}/static/dark/2.0`}/>
-    :<span key={index}>{fragment.text}</span>)}</>
-}
-
-function roleFor(badges:any[]){
-  const ids=(badges||[]).map(value=>String(value?.set_id||value?.id||'').toLowerCase())
-  if(ids.includes('broadcaster'))return'broadcaster'
-  if(ids.includes('moderator'))return'moderator'
-  if(ids.includes('vip'))return'vip'
-  if(ids.includes('founder'))return'founder'
-  if(ids.includes('subscriber'))return'subscriber'
-  return'viewer'
-}
-
-function toMessage(row:EventRow):Message{
-  return{id:row.id,source:String(row.source||'twitch'),eventType:String(row.event_type||'message'),eventData:row.event_data||{},user:row.chatter_login,name:cleanName(row.chatter_name||row.chatter_login),text:row.message_text,color:row.color,time:new Date(row.created_at),fragments:Array.isArray(row.fragments)?row.fragments:[],badges:Array.isArray(row.badges)?row.badges:[]}
-}
+function PlatformIcon({source}:{source:string}){if(source==='youtube')return <span className="platform-icon" title="YouTube" aria-label="YouTube"><svg viewBox="0 0 24 24" width="100%" height="100%" aria-hidden="true"><rect x="1" y="5" width="22" height="14" rx="4" fill="#ff0033"/><path d="M10 9l6 3-6 3z" fill="white"/></svg></span>;return <span className="platform-icon" title="Twitch" aria-label="Twitch"><svg viewBox="0 0 24 24" width="100%" height="100%" aria-hidden="true"><path fill="#9147ff" d="M3 2h18v13l-5 5h-4l-3 2v-2H5V6z"/><path fill="white" d="M7 5h11v8l-3 3h-4l-2 2v-2H7zm4 3v5h2V8zm4 0v5h2V8z"/></svg></span>}
+function MessageBody({message,showEmotes,externalEmotes}:{message:Message;showEmotes:boolean;externalEmotes:Record<string,ExternalEmote>}){if(!showEmotes)return <>{message.text}</>;if(!message.fragments?.length)return <ExternalText text={message.text} emotes={externalEmotes}/>;return <>{message.fragments.map((fragment,index)=>fragment.type==='emote'&&fragment.emote?.id?<img key={index} className="chat-emote" alt={fragment.text} src={`https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(fragment.emote.id)}/static/dark/2.0`}/>:<ExternalText key={index} text={fragment.text} emotes={externalEmotes}/>)}</>}
+function ExternalText({text,emotes}:{text:string;emotes:Record<string,ExternalEmote>}){if(!Object.keys(emotes).length)return <>{text}</>;return <>{String(text).split(/(\s+)/).map((token,index)=>{const e=emotes[token];return e?<img key={index} className="chat-emote" alt={token} title={`${token} · ${e.provider}`} src={e.url} referrerPolicy="no-referrer"/>:<span key={index}>{token}</span>})}</>}
+function roleFor(badges:any[]){const ids=(badges||[]).map(value=>String(value?.set_id||value?.id||'').toLowerCase());if(ids.includes('broadcaster'))return'broadcaster';if(ids.includes('moderator'))return'moderator';if(ids.includes('vip'))return'vip';if(ids.includes('founder'))return'founder';if(ids.includes('subscriber'))return'subscriber';return'viewer'}
+function toMessage(row:EventRow):Message{return{id:row.id,source:String(row.source||'twitch'),eventType:String(row.event_type||'message'),eventData:row.event_data||{},user:row.chatter_login,name:cleanName(row.chatter_name||row.chatter_login),text:row.message_text,color:row.color,time:new Date(row.created_at),fragments:Array.isArray(row.fragments)?row.fragments:[],badges:Array.isArray(row.badges)?row.badges:[]}}
 function cleanName(value:string){return value.replace(/^🟣\s*/,'').replace(/^🔴▶\s*/,'')}
 function clamp(value:number,min:number,max:number){return Math.min(max,Math.max(min,Number.isFinite(value)?value:min))}
-function hex(value:string){
-  const raw=value.replace('#','')
-  const normalized=raw.length===3?raw.split('').map(char=>char+char).join(''):raw
-  const number=parseInt(normalized,16)
-  return`${(number>>16)&255},${(number>>8)&255},${number&255}`
-}
+function hex(value:string){const raw=value.replace('#',''),normalized=raw.length===3?raw.split('').map(char=>char+char).join(''):raw,number=parseInt(normalized,16);return`${(number>>16)&255},${(number>>8)&255},${number&255}`}
