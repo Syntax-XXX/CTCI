@@ -4,6 +4,7 @@ import { createAdminSupabase } from '@/lib/supabase/admin'
 import { getEventSubSecret, getValidTwitchUserToken, sendTwitchChatMessage } from '@/lib/twitch'
 import { sendDiscordChatEmbed } from '@/lib/discord'
 import { executeCommand, listCommands, parseCommand, type CommandPermission } from '@/lib/commands'
+import { processChatFeatures } from '@/lib/chat-features'
 
 export const runtime = 'nodejs'
 
@@ -46,6 +47,14 @@ export async function POST(request: NextRequest) {
     if (overlayError) throw overlayError
     if (!overlay?.enabled) return new NextResponse(null, { status: 204 })
     const text = String(event.message?.text || '')
+    const featureResult=await processChatFeatures({admin,ownerId:profile.id,overlayId:overlay.id,source:'twitch',eventId:event.message_id,userId:event.chatter_user_id,login:String(event.chatter_user_login||'').toLowerCase(),displayName:String(event.chatter_user_name||event.chatter_user_login||'unknown'),text,commandPrefix:overlay.command_prefix||'CC!'})
+    if(featureResult.handled){
+      if(featureResult.reply)await replyInTwitch(admin,profile.id,event.broadcaster_user_id,event.message_id,featureResult.reply)
+      await mirrorToDiscord(admin,profile.id,event,text,true,timestamp)
+      return new NextResponse(null,{status:204})
+    }
+    if(featureResult.suppressOverlay)return new NextResponse(null,{status:204})
+
     let parsed = null
     try { parsed = parseCommand(text, overlay.command_prefix || 'CC!') } catch (error) {
       await admin.from('command_audit_log').insert({owner_id:profile.id,channel_twitch_user_id:event.broadcaster_user_id,twitch_user_id:event.chatter_user_id,twitch_login:String(event.chatter_user_login||'').toLowerCase(),command_name:'parse',raw_command:text.slice(0,500),sanitized_args:[],source:'core',success:false,error_code:error instanceof Error?error.message:'parse_error'})
