@@ -51,7 +51,8 @@ async function persistChat(admin:any,overlay:any,videoId:string,liveChatId:strin
   for(const item of items){
     const snippet=item?.snippet||{},author=item?.authorDetails||{},type=String(snippet.type||'textMessageEvent'),text=messageText(snippet,type)
     if(!text||!item?.id)continue
-    const actor={source:'youtube' as const,userId:String(author.channelId||`youtube:${item.id}`),login:String(author.channelId||author.displayName||'youtube').toLowerCase(),displayName:String(author.displayName||'YouTube'),roles:youtubeRoles(author)}
+    const eventId=`youtube:${item.id}`
+    const actor={source:'youtube' as const,userId:String(author.channelId||eventId),login:String(author.channelId||author.displayName||'youtube').toLowerCase(),displayName:String(author.displayName||'YouTube'),roles:youtubeRoles(author),eventId}
     const kind=eventType(type)
     let moderation={blocked:false,flagged:false} as any
     if(kind==='message')moderation=await evaluateModeration(admin,{ownerId:overlay.user_id,source:'youtube',userId:actor.userId,displayName:actor.displayName,text})
@@ -60,7 +61,7 @@ async function persistChat(admin:any,overlay:any,videoId:string,liveChatId:strin
     if(engagement.handled){await runAutomations(admin,overlay.user_id,{type:'command',source:'youtube',text,userId:actor.userId,displayName:actor.displayName,metadata:{kind:'engagement'}});continue}
     if(kind==='message'){try{await awardActivity(admin,overlay.user_id,actor)}catch(error){console.error('YouTube loyalty award failed',error)}}
     await runAutomations(admin,overlay.user_id,{type:kind==='message'?'chat_message':'paid_event',source:'youtube',text,userId:actor.userId,displayName:actor.displayName,eventType:kind,metadata:eventData(snippet,type)})
-    rows.push({id:`youtube:${item.id}`,overlay_id:overlay.id,broadcaster_user_id:`youtube:${videoId}`,broadcaster_login:`youtube:${videoId}`,chatter_user_id:actor.userId,chatter_login:actor.login,chatter_name:actor.displayName,message_text:text,color:null,badges:youtubeBadges(author),fragments:[],reply:null,source:'youtube',event_type:kind,event_data:{...eventData(snippet,type),...(moderation.flagged?{moderation:{flagged:true,reason:moderation.reason}}:{})},created_at:String(snippet.publishedAt||new Date().toISOString())})
+    rows.push({id:eventId,overlay_id:overlay.id,broadcaster_user_id:`youtube:${videoId}`,broadcaster_login:`youtube:${videoId}`,chatter_user_id:actor.userId,chatter_login:actor.login,chatter_name:actor.displayName,message_text:text,color:null,badges:youtubeBadges(author),fragments:[],reply:null,source:'youtube',event_type:kind,event_data:{...eventData(snippet,type),...(moderation.flagged?{moderation:{flagged:true,reason:moderation.reason}}:{})},created_at:String(snippet.publishedAt||new Date().toISOString())})
   }
   if(rows.length){const{error}=await admin.from('chat_events').upsert(rows,{onConflict:'id',ignoreDuplicates:true});if(error)throw error}
   const interval=clamp(Number(response.pollingIntervalMillis)||5000,1000,30000),offline=!!response.offlineAt,update:any={youtube_live_chat_id:offline?null:liveChatId,youtube_video_id:offline&&autoDetect?null:videoId,youtube_next_page_token:offline?null:(response.nextPageToken||null),youtube_next_poll_at:new Date(Date.now()+(offline?10000:interval)).toISOString(),youtube_last_sync_at:new Date().toISOString()};if(offline)update.youtube_active_title=null;const{error}=await admin.from('overlays').update(update).eq('id',overlay.id);if(error)throw error
