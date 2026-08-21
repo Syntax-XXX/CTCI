@@ -14,6 +14,7 @@ const baseItems = [
   { href: '/dashboard/badges', label: 'Badges', icon: '◆' },
   { href: '/dashboard/plugins', label: 'Plugins', icon: '◈' },
   { href: '/dashboard/features', label: 'Features', icon: '⚙' },
+  { href: '/dashboard/profile', label: 'Profile β', icon: '●' },
 ]
 export default function DashboardNav({ onSignOut }: DashboardNavProps) {
   const pathname = usePathname(),[syncing,setSyncing]=useState(false),[flags,setFlags]=useState<Record<string,boolean>>({})
