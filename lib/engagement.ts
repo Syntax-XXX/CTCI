@@ -1,7 +1,7 @@
 import { isFeatureEnabled } from '@/lib/features'
 
 type Source='twitch'|'youtube'|'discord'
-type Actor={source:Source;userId:string;login:string;displayName:string;roles?:string[]}
+type Actor={source:Source;userId:string;login:string;displayName:string;roles?:string[];eventId?:string}
 type Result={handled:boolean;message?:string}
 
 export async function ensureViewer(admin:any,actor:Actor){
@@ -28,22 +28,12 @@ export async function ensureViewer(admin:any,actor:Actor){
 }
 
 export async function awardActivity(admin:any,ownerId:string,actor:Actor){
-  const loyalty=await isFeatureEnabled(admin,ownerId,'loyalty')
-  const currency=await isFeatureEnabled(admin,ownerId,'currency')
+  const[loyalty,currency]=await Promise.all([isFeatureEnabled(admin,ownerId,'loyalty'),isFeatureEnabled(admin,ownerId,'currency')])
   if(!loyalty&&!currency)return
-  const viewerId=await ensureViewer(admin,actor)
-  const existing=await admin.from('loyalty_accounts').select('xp,level,balance,updated_at').eq('owner_id',ownerId).eq('viewer_id',viewerId).maybeSingle()
-  if(existing.error)throw existing.error
-  const last=existing.data?.updated_at?Date.parse(existing.data.updated_at):0
-  if(Date.now()-last<12_000)return
-  const xpDelta=loyalty?5:0,currencyDelta=currency?1:0
-  const nextXp=Math.max(0,Number(existing.data?.xp||0)+xpDelta)
-  const nextBalance=Math.max(0,Number(existing.data?.balance||0)+currencyDelta)
-  const level=Math.max(1,Math.floor(Math.sqrt(nextXp)/10)+1)
-  const saved=await admin.from('loyalty_accounts').upsert({owner_id:ownerId,viewer_id:viewerId,xp:nextXp,level,balance:nextBalance,updated_at:new Date().toISOString()},{onConflict:'owner_id,viewer_id'})
-  if(saved.error)throw saved.error
-  const tx=await admin.from('loyalty_transactions').insert({owner_id:ownerId,viewer_id:viewerId,kind:'chat_activity',xp_delta:xpDelta,currency_delta:currencyDelta,metadata:{source:actor.source}})
-  if(tx.error)throw tx.error
+  const eventId=actor.eventId||`activity:${actor.source}:${actor.userId}:${Math.floor(Date.now()/12000)}`
+  const result=await admin.rpc('award_loyalty_event',{p_owner_id:ownerId,p_platform:actor.source,p_platform_user_id:actor.userId,p_platform_login:actor.login,p_display_name:actor.displayName,p_event_id:eventId,p_xp:loyalty?5:0,p_currency:currency?1:0})
+  if(result.error)throw result.error
+  return result.data
 }
 
 export async function handleEngagementCommand(admin:any,ownerId:string,actor:Actor,text:string,prefix='CC!'):Promise<Result>{
@@ -91,12 +81,14 @@ export async function handleEngagementCommand(admin:any,ownerId:string,actor:Act
   if(command==='ask'&&await isFeatureEnabled(admin,ownerId,'qna')){
     const question=args.join(' ').trim().slice(0,500)
     if(!question)return{handled:true,message:`Usage: ${prefix}ask your question`}
-    const row=await admin.from('qna_items').insert({owner_id:ownerId,source:actor.source,user_id:actor.userId,display_name:actor.displayName,question,status:'pending'})
+    const payload:any={owner_id:ownerId,source:actor.source,user_id:actor.userId,display_name:actor.displayName,question,status:'pending'}
+    if(actor.eventId)payload.source_event_id=actor.eventId
+    const row=actor.eventId?await admin.from('qna_items').upsert(payload,{onConflict:'owner_id,source_event_id',ignoreDuplicates:true}):await admin.from('qna_items').insert(payload)
     if(row.error)throw row.error
     return{handled:true,message:'Question added to the Q&A queue.'}
   }
 
-  if((command==='points'||command==='xp')&&(await isFeatureEnabled(admin,ownerId,'loyalty')||await isFeatureEnabled(admin,ownerId,'currency'))){
+  if((command==='points'||command==='xp'||command==='level')&&(await isFeatureEnabled(admin,ownerId,'loyalty')||await isFeatureEnabled(admin,ownerId,'currency'))){
     const viewerId=await ensureViewer(admin,actor)
     const account=await admin.from('loyalty_accounts').select('xp,level,balance').eq('owner_id',ownerId).eq('viewer_id',viewerId).maybeSingle()
     if(account.error)throw account.error
