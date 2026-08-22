@@ -1,0 +1,25 @@
+.builder-preview-row{min-width:0;color:#fff}
+.builder-preview-userline{display:flex;align-items:center;gap:6px;min-width:0}
+.builder-preview-platform{flex:none;font-size:13px;color:#4a5568}
+.builder-preview-name{display:inline-flex;align-items:center;min-width:0;max-width:calc(100% - 78px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.1}
+.builder-preview-badges{margin-left:auto;flex:none;color:#f6f7fb;font-size:15px;letter-spacing:2px;text-shadow:0 1px 3px rgba(0,0,0,.25)}
+.builder-preview-message{min-width:0;overflow-wrap:anywhere;line-height:1.3;box-shadow:0 6px 20px rgba(0,0,0,.16)}
+.builder-preview-slot{display:inline-block;object-fit:contain;vertical-align:middle}
+.builder-asset-button{padding-inline:7px}
+
+.feature-card-heading{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.feature-card-heading h3{margin:0}
+.feature-release{font-size:11px;font-weight:850;letter-spacing:.025em;color:var(--text-soft)}
+.feature-meta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:8px}
+.feature-meta .small{line-height:1.35}
+
+.profile-identity{display:flex;align-items:center;gap:15px}
+.profile-avatar{width:64px;height:64px;flex:none;border:1px solid var(--line);border-radius:14px;object-fit:cover;background:var(--surface-2)}
+.profile-avatar-fallback{width:64px;height:64px;flex:none;font-size:20px}
+.profile-display-name{display:block;margin-bottom:4px;font-size:19px;font-weight:800;letter-spacing:-.025em}
+
+@media(max-width:760px){
+  .builder-preview-name{max-width:calc(100% - 62px)}
+  .builder-preview-badges{font-size:13px;letter-spacing:1px}
+  .profile-identity{align-items:flex-start}
+}
