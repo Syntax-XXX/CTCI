@@ -47,7 +47,10 @@ export async function getOwnYouTubeChannel(accessToken:string){
 }
 
 export async function getActiveYouTubeBroadcast(accessToken:string){
-  const j=await youtube(accessToken,'/liveBroadcasts?part=id,snippet,status&broadcastStatus=active&mine=true&maxResults=50')
+  // liveBroadcasts.list requires exactly one primary filter. `broadcastStatus=active`
+  // already scopes the authorized request to the current account's matching broadcasts;
+  // combining it with `mine=true` returns HTTP 400 (incompatible parameters).
+  const j=await youtube(accessToken,'/liveBroadcasts?part=id,snippet,status&broadcastStatus=active&maxResults=50')
   const items=Array.isArray(j.items)?j.items:[]
   if(!items.length)return null
   items.sort((a:any,b:any)=>Date.parse(b?.snippet?.actualStartTime||b?.snippet?.scheduledStartTime||b?.snippet?.publishedAt||0)-Date.parse(a?.snippet?.actualStartTime||a?.snippet?.scheduledStartTime||a?.snippet?.publishedAt||0))
